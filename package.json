@@ -1,0 +1,49 @@
+{
+  "name": "ui-draw",
+  "version": "0.3.0",
+  "description": "给 coding agent 的协作画板：像人一样一笔一笔画 UI 线框，人类在浏览器实时共创批注，定稿导出设计包。MCP 插件形态，多 agent 共享常驻服务，画板按项目名区分。",
+  "type": "module",
+  "license": "MIT",
+  "author": "hfc",
+  "main": "dist/index.js",
+  "bin": {
+    "ui-draw": "dist/index.js"
+  },
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "agent",
+    "ui",
+    "wireframe",
+    "whiteboard",
+    "design",
+    "zcode-plugin",
+    "claude-code-plugin"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc && node scripts/copy-shared.mjs",
+    "setup": "npm install && npm run build",
+    "install:user": "node scripts/install.mjs",
+    "test": "vitest run",
+    "test:e2e": "node tests/mcp-e2e.mjs",
+    "smoke": "node tests/smoke.mjs",
+    "start": "node dist/index.js",
+    "daemon": "node dist/daemon.js",
+    "daemon:stop": "node scripts/stop-daemon.mjs",
+    "validate": "node scripts/validate.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "@napi-rs/canvas": "^1.0.13",
+    "ws": "^8.22.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.2",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}

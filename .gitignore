@@ -1,0 +1,13 @@
+# 依赖
+node_modules/
+
+# 运行时/临时数据（主存档在用户目录 ~/.ui-draw）
+.ui-draw/
+design/
+*.log
+.DS_Store
+Thumbs.db
+.install.lock
+
+# ZCode 工作区内部文件
+.zcode/

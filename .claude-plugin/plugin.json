@@ -1,0 +1,8 @@
+{
+  "name": "ui-draw",
+  "version": "0.3.0",
+  "description": "给 coding agent 的协作画板：像人一样在画板上画 UI 线框，人类在浏览器实时共创批注，定稿导出设计包。多 agent 共享一个常驻服务，画板按项目名区分。",
+  "author": { "name": "hfc" },
+  "skills": "./skills",
+  "mcpServers": "./.mcp.json"
+}
