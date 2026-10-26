@@ -24,7 +24,7 @@ git clone https://github.com/<you>/ui-draw.git
 3. 到 **个人 → ui-draw-plugins → ui-draw**，点 **安装**
 4. 新开一个任务即可使用
 
-> 插件会被复制到 ZCode 的插件缓存目录，其中不含 `node_modules`。**首次调用工具时**，入口脚本 `scripts/run.mjs` 会自动执行一次 `npm install --omit=dev`（`dist/` 已随仓库提交，无需构建）。想提前装好就在仓库目录执行 `npm install`。
+> 插件会被复制到 ZCode 的插件缓存目录，其中不含 `node_modules`。**首次调用工具时**，入口脚本 `scripts/run.mjs` 会自动执行一次 `npm install --omit=dev`（`dist/` 已随仓库提交，无需构建）。想提前装好就在仓库目录执行 `npm install`；只安装插件使用的话不必先装。
 >
 > 如果之前手动配过 ui-draw 的 MCP，二者选一即可（用户级配置优先于插件），避免重复。
 
@@ -225,6 +225,7 @@ node tests/dev-board.mjs  # 临时多项目服务 + 示例画板（端口 4690�
 - **项目名是 draft-xxxx**：说明 agent 的工作目录是 ZCode 的草稿工作区（没有 git/package.json）；用 `UI_DRAW_PROJECT_DIR` 可强制项目目录
 - **想换项目画板**：`http://127.0.0.1:4680/` 是项目索引，点进去即可
 - **升级后行为没变**：守护进程会按版本号自动替换；仍不放心就 `npm run daemon:stop` 后重启会话
+- **卸载**：插件方式在 **设置 → 插件** 停用/卸载；手动方式删掉 `~/.zcode/cli/config.json` 里的 `mcp.servers.ui-draw`、删除 `~/.agents/skills/ui-draw`，再 `npm run daemon:stop`。画板数据在 `~/.ui-draw`，按需自行删除
 
 ## License
 
