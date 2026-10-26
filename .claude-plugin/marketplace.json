@@ -1,6 +1,6 @@
 {
   "name": "ui-draw-plugins",
-  "owner": { "name": "hfc" },
+  "owner": { "name": "pyke" },
   "plugins": [
     {
       "name": "ui-draw",

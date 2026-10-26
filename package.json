@@ -4,7 +4,7 @@
   "description": "给 coding agent 的协作画板：像人一样一笔一笔画 UI 线框，人类在浏览器实时共创批注，定稿导出设计包。MCP 插件形态，多 agent 共享常驻服务，画板按项目名区分。",
   "type": "module",
   "license": "MIT",
-  "author": "hfc",
+  "author": "pyke",
   "main": "dist/index.js",
   "bin": {
     "ui-draw": "dist/index.js"
