@@ -16,7 +16,7 @@
 ### 方式一：作为 ZCode 插件（推荐）
 
 ```bash
-git clone https://github.com/<you>/ui-draw.git
+git clone https://github.com/pykelysia/ui-draw.git
 ```
 
 1. 打开 **设置 → 插件市场 → 添加 → 添加插件市场**
@@ -31,7 +31,7 @@ git clone https://github.com/<you>/ui-draw.git
 ### 方式二：一键脚本（不使用插件市场）
 
 ```bash
-git clone https://github.com/<you>/ui-draw.git
+git clone https://github.com/pykelysia/ui-draw.git
 cd ui-draw
 node scripts/install.mjs
 ```
