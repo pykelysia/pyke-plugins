@@ -38,6 +38,7 @@ const b = npm(['run', 'build'])
 if (b.status !== 0) process.exit(1)
 
 const entry = join(root, 'dist', 'index.js')
+const skillFile = join(homedir(), '.agents', 'skills', 'ui-draw', 'SKILL.md')
 
 // 2. MCP 配置
 if (!args.has('--no-config')) {
@@ -53,15 +54,20 @@ if (!args.has('--no-config')) {
   cfg.mcp ??= {}
   cfg.mcp.servers ??= {}
   cfg.mcp.servers['ui-draw'] = { command: 'node', args: [entry] }
+  if (!args.has('--no-skill')) {
+    cfg.skills ??= {}
+    const skillKey = skillFile.replaceAll('\\', '/')
+    cfg.skills[skillKey] = { ...cfg.skills[skillKey], enable: true }
+  }
   writeFileSync(cfgFile, JSON.stringify(cfg, null, 2) + '\n', 'utf-8')
   log(`已写入 MCP 配置：${cfgFile}`)
 }
 
 // 3. skill
 if (!args.has('--no-skill')) {
-  const destDir = join(homedir(), '.agents', 'skills', 'ui-draw')
+  const destDir = dirname(skillFile)
   mkdirSync(destDir, { recursive: true })
-  copyFileSync(join(root, 'skills', 'ui-draw', 'SKILL.md'), join(destDir, 'SKILL.md'))
+  copyFileSync(join(root, 'skills', 'ui-draw', 'SKILL.md'), skillFile)
   log(`已安装 skill：${destDir}`)
 }
 

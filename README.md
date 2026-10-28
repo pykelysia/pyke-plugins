@@ -36,7 +36,7 @@ cd ui-draw
 node scripts/install.mjs
 ```
 
-脚本会：安装依赖并构建 → 写 `~/.zcode/cli/config.json` 的 `mcp.servers.ui-draw` → 把 skill 复制到 `~/.agents/skills/ui-draw` → 拉起常驻守护进程。写完会提示你新开会话。
+脚本会：安装依赖并构建 → 写 `~/.zcode/cli/config.json` 的 `mcp.servers.ui-draw` → 把 skill 复制到 `~/.agents/skills/ui-draw` 并在 ZCode 配置中启用 → 拉起常驻守护进程。写完会提示你新开会话。
 
 可加 `--no-config` / `--no-skill` / `--no-daemon` 跳过其中某一步。
 
@@ -225,7 +225,7 @@ node tests/dev-board.mjs  # 临时多项目服务 + 示例画板（端口 4690�
 - **项目名是 draft-xxxx**：说明 agent 的工作目录是 ZCode 的草稿工作区（没有 git/package.json）；用 `UI_DRAW_PROJECT_DIR` 可强制项目目录
 - **想换项目画板**：`http://127.0.0.1:4680/` 是项目索引，点进去即可
 - **升级后行为没变**：守护进程会按版本号自动替换；仍不放心就 `npm run daemon:stop` 后重启会话
-- **卸载**：插件方式在 **设置 → 插件** 停用/卸载；手动方式删掉 `~/.zcode/cli/config.json` 里的 `mcp.servers.ui-draw`、删除 `~/.agents/skills/ui-draw`，再 `npm run daemon:stop`。画板数据在 `~/.ui-draw`，按需自行删除
+- **卸载**：插件方式在 **设置 → 插件** 停用/卸载；手动方式删掉 `~/.zcode/cli/config.json` 里的 `mcp.servers.ui-draw` 和对应的 `skills` 条目、删除 `~/.agents/skills/ui-draw`，再 `npm run daemon:stop`。画板数据在 `~/.ui-draw`，按需自行删除
 
 ## License
 
