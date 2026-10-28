@@ -49,6 +49,11 @@ export function defaultSavePath(): string {
   return join(process.cwd(), '.ui-draw', 'board.json')
 }
 
+/** save_board 工具的默认路径：一块画布一个文件，避免互相覆盖 */
+export function defaultBoardSavePath(boardId: string): string {
+  return join(process.cwd(), '.ui-draw', `${boardId}.json`)
+}
+
 export function defaultDesignDir(): string {
   return join(process.cwd(), 'design')
 }

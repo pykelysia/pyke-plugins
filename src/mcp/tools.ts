@@ -1,14 +1,15 @@
 import { z } from 'zod'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { AnnotationElement } from '../board/types.js'
 import { hitElement, nextAnnotationNumber } from '../board/ops.js'
 import { annotationsOf, formatAnnotations, inspectBoard } from '../board/describe.js'
 import { decodeImageSize } from '../render/raster.js'
-import { defaultDesignDir, defaultSavePath, loadBoardFile, saveBoardFile, writeDesignBundle } from '../persist.js'
+import { defaultBoardSavePath, defaultDesignDir, loadBoardFile, saveBoardFile, writeDesignBundle } from '../persist.js'
 import { HubClient } from '../hub/client.js'
+import { slugify } from '../hub/paths.js'
 
 const INK = '#1f2937'
 
@@ -50,7 +51,19 @@ const POINT = z.array(z.number()).length(2)
 const POINTS = z.array(POINT).min(1)
 
 function projectLine(client: HubClient): string {
-  return `项目「${client.project.name}」· 画板 ${client.boardUrl}`
+  const board = client.activeBoard
+  return `项目「${client.project.name}」· 画布「${board?.title ?? '？'}」· ${client.boardUrl}`
+}
+
+/** 画布尺寸解析：自定义 width/height 优先，其次预设，默认 desktop */
+function boardSize(args: { preset?: 'desktop' | 'laptop' | 'tablet' | 'phone'; width?: number; height?: number }): [number, number] {
+  const preset: Record<string, [number, number]> = {
+    desktop: [1440, 900],
+    laptop: [1280, 800],
+    tablet: [820, 1180],
+    phone: [390, 844],
+  }
+  return args.width && args.height ? [args.width, args.height] : (args.preset ? preset[args.preset] : preset.desktop)
 }
 
 export function registerTools(server: McpServer, ctx: Ctx): void {
@@ -60,38 +73,27 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
     'setup_board',
     {
       description:
-        '支起一块新画板（换新板，会清空当前内容！）。可选尺寸预设 desktop/laptop/tablet/phone 或自定义 width/height。每个项目一块画板、按项目名区分（多个 agent 共享同一个本地服务）；启动时会自动恢复上次的画板，此时 setup_board 会被拒绝，除非显式传 force=true 重来。',
+        '支起一块**新的**画布并切过去画（一个界面一块画布，旧画布原样保留，不会清空）。可选尺寸预设 desktop/laptop/tablet/phone 或自定义 width/height。画别的界面就再 setup_board；回到旧画布用 switch_board；想清空当前画布用 clear scope=board。项目里同标题的画布只能有一块。',
       inputSchema: {
+        title: z.string().min(1).max(48).optional().describe('画布标题，建议用界面名（如「登录页」「设置页」）；不传自动编号'),
         preset: z.enum(['desktop', 'laptop', 'tablet', 'phone']).optional().describe('尺寸预设：desktop=1440×900, laptop=1280×800, tablet=820×1180, phone=390×844'),
         width: z.number().int().min(200).max(4096).optional().describe('自定义宽（优先于 preset）'),
         height: z.number().int().min(200).max(4096).optional().describe('自定义高'),
         grid: z.boolean().optional().describe('是否画浅网格（默认开，建议开着方便对齐）'),
-        force: z.boolean().optional().describe('画板上已有内容时，必须显式设 true 才会清空重来'),
       },
     },
     wrap(async (args, c) => {
       const client = await c.client()
-      const { board } = await client.state()
-      if (board.elements.length > 0 && !args.force) {
-        return fail(
-          `项目「${client.project.name}」的画板上已经有 ${board.elements.length} 个图元（自动恢复/自动存档在 ${client.storePath}）。\n` +
-            `如果要接着画，直接用 draw_* / move_elements 等工具即可，不要重新支板。\n` +
-            `确实要清空重来：setup_board 传 force=true，或 clear scope=board 后继续。`,
-        )
-      }
-      const preset: Record<string, [number, number]> = {
-        desktop: [1440, 900],
-        laptop: [1280, 800],
-        tablet: [820, 1180],
-        phone: [390, 844],
-      }
-      const [w, h] =
-        args.width && args.height
-          ? [args.width, args.height]
-          : (args.preset ? preset[args.preset] : preset.desktop)
-      await client.commit({ type: 'setup', width: w, height: h, grid: args.grid ?? true })
+      const [w, h] = boardSize(args)
+      const meta = await client.createBoard({
+        ...(args.title ? { title: args.title } : {}),
+        width: w,
+        height: h,
+        grid: args.grid ?? true,
+      })
       return ok(
-        `画板已支起：${w}×${h}，网格${args.grid ?? true ? '开' : '关'}。图层（底→顶）：草稿、线稿、批注，当前在「草稿」层。\n` +
+        `新画布已支起：「${meta.title}」（${w}×${h}，网格${args.grid ?? true ? '开' : '关'}）。图层（底→顶）：草稿、线稿、批注，当前在「草稿」层。\n` +
+          `本项目共 ${client.project.boards.length} 块画布——画别的界面再 setup_board，回旧画布用 switch_board。\n` +
           `${projectLine(client)}（用 show_board 让人类看到）。\n` +
           `画法提示：先在草稿层用细灰线(宽1 #9ca3af)打布局，正式线稿画到线稿层（switch 到「线稿」后再画）。`,
       )
@@ -99,10 +101,51 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
   )
 
   server.registerTool(
+    'switch_board',
+    {
+      description:
+        '切换到本项目的另一块画布（按 id 或标题，如 switch_board board=登录页）。之后所有画板工具都落在这块画布上。项目里有哪些画布用 list_boards 看。',
+      inputSchema: {
+        board: z.string().min(1).describe('目标画布的 id 或标题'),
+      },
+    },
+    wrap(async (args, c) => {
+      const client = await c.client()
+      const b = await client.switchBoard(args.board)
+      const { board } = await client.state()
+      return ok(
+        `已切到画布「${b.title}」（id=${b.id}）：${board.width}×${board.height}，${board.elements.length} 个图元，当前图层「${board.activeLayer}」。之后的笔画都画在这块画布上。`,
+      )
+    }, ctx),
+  )
+
+  server.registerTool(
+    'list_boards',
+    {
+      description: '列出本项目所有画布（id、标题、尺寸、图元数、更新时间，标注当前所在画布）。一个界面一块画布：新界面用 setup_board 支新的，旧界面 switch_board 切回去。',
+      inputSchema: {},
+    },
+    wrap(async (_args, c) => {
+      const client = await c.client()
+      const boards = await client.listBoards()
+      if (boards.length === 0) {
+        return ok(`项目「${client.project.name}」还没有画布。用 setup_board（可带 title，如「登录页」）支起第一块。`)
+      }
+      const active = client.activeBoard
+      const lines = boards.map((b) => {
+        const mark = b.id === active?.id ? ' ← 当前' : ''
+        const when = b.updatedAt ? ` · ${(b.updatedAt.replace('T', ' ').slice(0, 16))}` : ''
+        return `- 「${b.title}」（id=${b.id}）${b.width ?? '?'}×${b.height ?? '?'} · ${b.elements ?? '?'} 个图元${when}${mark}`
+      })
+      return ok(`项目「${client.project.name}」共 ${boards.length} 块画布：\n${lines.join('\n')}\n切换：switch_board board=<id 或标题>`)
+    }, ctx),
+  )
+
+  server.registerTool(
     'show_board',
     {
       description:
-        '把画板页面呈现在人类眼前（按项目名区分的独立地址）。默认优先在 agent 桌面的内置浏览器里打开；环境没有内置浏览器能力时回落到系统默认浏览器。你自己看画面请用 look_at_board。',
+        '把当前画布的页面呈现在人类眼前（每块画布一个地址，项目里其他画布用页面顶部的切换器或 list_boards 拿地址）。默认优先在 agent 桌面的内置浏览器里打开；环境没有内置浏览器能力时回落到系统默认浏览器。你自己看画面请用 look_at_board。',
       inputSchema: {
         opener: z
           .enum(['auto', 'desktop', 'system', 'none'])
@@ -564,8 +607,14 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
     wrap(async (_args, c) => {
       const client = await c.client()
       const { board } = await client.state()
+      const canvas = client.guardBoard()
+      const others = client.project.boards.filter((b) => b.id !== canvas.id)
+      const boardNote =
+        others.length > 0
+          ? `本项目共 ${client.project.boards.length} 块画布，其他：${others.map((b) => `「${b.title}」`).join('')}（switch_board 切换）`
+          : '画新界面用 setup_board 支新画布'
       return ok(
-        `${inspectBoard(board)}\n\n项目：${client.project.name}（${client.project.projectDir}）\n画板地址：${client.boardUrl}\n自动存档：${client.storePath}`,
+        `${inspectBoard(board)}\n\n画布：「${canvas.title}」（id=${canvas.id}）· ${boardNote}\n项目：${client.project.name}（${client.project.projectDir}）\n画布地址：${client.boardUrl}`,
       )
     }, ctx),
   )
@@ -576,24 +625,25 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
     'save_board',
     {
       description:
-        '把画板另存一份快照文件（日常自动存档在用户目录，这里用于归档/迁移）。默认存到 <项目>/.ui-draw/board.json。',
+        '把当前画布另存一份快照文件（日常自动存档在用户目录，这里用于归档/迁移）。默认存到 <项目>/.ui-draw/<画布id>.json。',
       inputSchema: {
-        path: z.string().optional().describe('保存路径（.json），缺省当前项目下 .ui-draw/board.json'),
+        path: z.string().optional().describe('保存路径（.json），缺省当前项目下 .ui-draw/<画布id>.json'),
       },
     },
     wrap(async (args, c) => {
       const client = await c.client()
       const { board } = await client.state()
-      const abs = saveBoardFile(board, args.path ?? defaultSavePath())
+      const canvas = client.guardBoard()
+      const abs = saveBoardFile(board, args.path ?? defaultBoardSavePath(canvas.id))
       await client.flush()
-      return ok(`画板已另存：${abs}（${board.elements.length} 个图元；日常自动存档仍在 ${client.storePath}）`)
+      return ok(`画布「${canvas.title}」已另存：${abs}（${board.elements.length} 个图元；日常自动存档在用户目录，每块画布一个文件）`)
     }, ctx),
   )
 
   server.registerTool(
     'load_board',
     {
-      description: '把一份画板快照恢复到当前项目的画板上（替换当前内容，可 undo）。',
+      description: '把一份画板快照恢复到当前画布上（替换当前画布内容，可 undo）。',
       inputSchema: {
         path: z.string().describe('board.json 路径'),
       },
@@ -602,7 +652,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
       const client = await c.client()
       const board = loadBoardFile(args.path)
       await client.restore(board)
-      return ok(`已恢复画板：${board.width}×${board.height}，${board.elements.length} 个图元，当前图层「${board.activeLayer}」。`)
+      return ok(`已恢复到画布「${client.guardBoard().title}」：${board.width}×${board.height}，${board.elements.length} 个图元，当前图层「${board.activeLayer}」。`)
     }, ctx),
   )
 
@@ -610,19 +660,20 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
     'finalize_design',
     {
       description:
-        '设计定稿：把设计包导出到项目目录（默认 design/）——design.png（2 倍图）、design.svg、board.json、DESIGN.md（含每个图元的精确坐标与文案的实施说明）。下一步写 UI 代码时就以这份设计为准。',
+        '设计定稿：把当前画布的设计包导出到项目目录（默认 design/<画布标题>/）——design.png（2 倍图）、design.svg、board.json、DESIGN.md（含每个图元的精确坐标与文案的实施说明）。一块画布定稿一份设计包，互不覆盖。下一步写 UI 代码时就以这份设计为准。',
       inputSchema: {
-        dir: z.string().optional().describe('导出目录，缺省 <项目>/design'),
+        dir: z.string().optional().describe('导出目录，缺省 <项目>/design/<画布标题>'),
       },
     },
     wrap(async (args, c) => {
       const client = await c.client()
       const { board } = await client.state()
+      const canvas = client.guardBoard()
       const png = await client.screenshot({ scale: 2, hideAnnotations: true })
       const svg = await client.svg()
-      const files = writeDesignBundle(board, args.dir ?? defaultDesignDir(), png, svg)
+      const files = writeDesignBundle(board, args.dir ?? join(defaultDesignDir(), slugify(canvas.title)), png, svg)
       return ok(
-        `设计已定稿导出：\n${files.map((f) => `- ${f}`).join('\n')}\n\n实施 UI 时先读 DESIGN.md 拿精确坐标与文案，再对照 design.png 的视觉效果。`,
+        `画布「${canvas.title}」的设计已定稿导出：\n${files.map((f) => `- ${f}`).join('\n')}\n\n实施 UI 时先读 DESIGN.md 拿精确坐标与文案，再对照 design.png 的视觉效果。`,
       )
     }, ctx),
   )

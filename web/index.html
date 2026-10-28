@@ -8,7 +8,7 @@
 </head>
 <body>
   <header id="topbar">
-    <div class="brand">🎨 ui-draw <span class="sub">协作画板</span><span id="project-chip" class="chip"></span></div>
+    <div class="brand">🎨 ui-draw <span class="sub">协作画板</span><span id="project-chip" class="chip"></span><select id="board-select" class="chip-select" title="切换画布（一个界面一块画布）"></select></div>
     <div class="top-actions">
       <button id="btn-undo" title="撤销 (Ctrl+Z)">↩ 撤销</button>
       <button id="btn-redo" title="重做 (Ctrl+Y)">↪ 重做</button>
@@ -59,7 +59,7 @@
       <button id="copy-selection" title="把选中区域复制成图片，可直接粘贴到对话框 (Ctrl+Shift+C)" disabled>复制选区图</button>
       <span id="zoom-hint">滚轮缩放 · 空格/中键拖动平移</span>
     </div>
-    <div id="disconnected-banner">画板服务已断开（ZCode 会话可能已结束）。恢复会话后此页会自动重连；也可以让 agent 再执行 show_board。</div>
+    <div id="disconnected-banner">画板服务已断开，正在自动重连…如果一直没有恢复，可以让 agent 再执行 show_board。</div>
   </main>
 
   <aside id="layers-panel">

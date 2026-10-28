@@ -13,6 +13,18 @@ export function projectsDir() {
 export function projectDirOnDisk(slug) {
     return join(projectsDir(), slug);
 }
+/** 一个项目下所有画布的存档目录 */
+export function boardsDirOnDisk(slug) {
+    return join(projectDirOnDisk(slug), 'boards');
+}
+/** 单块画布的存档文件 */
+export function boardFileOnDisk(slug, boardId) {
+    return join(boardsDirOnDisk(slug), `${boardId}.json`);
+}
+/** 项目的画布索引（轻量摘要，不读画布内容也能列出清单） */
+export function boardsIndexFile(slug) {
+    return join(projectDirOnDisk(slug), 'boards.json');
+}
 export function runtimeFile() {
     return join(dataDir(), 'runtime.json');
 }

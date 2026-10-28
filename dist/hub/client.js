@@ -126,13 +126,17 @@ function staleLock(lock) {
 /**
  * MCP 侧到守护进程的代理客户端：状态、撤销历史、渲染都在守护进程里，
  * 多个 agent / 多个会话共享同一份。
+ * 一个项目可有多块画布（一个界面一块）；每个 MCP 会话记住自己的活跃画布，
+ * 默认落在项目里最近更新的那块上。
  */
 export class HubClient {
     base;
     project;
-    constructor(base, project) {
+    activeId;
+    constructor(base, project, activeId) {
         this.base = base;
         this.project = project;
+        this.activeId = activeId;
     }
     static async connect(projectDir) {
         const rt = await ensureDaemon();
@@ -146,25 +150,72 @@ export class HubClient {
         if (!res.ok)
             throw new Error(`注册项目失败：HTTP ${res.status}`);
         const info = (await res.json());
-        return new HubClient(base, info);
+        const latest = [...(info.boards ?? [])].sort((a, b) => ((a.updatedAt ?? '') < (b.updatedAt ?? '') ? 1 : -1))[0];
+        return new HubClient(base, info, latest?.id ?? null);
+    }
+    /** 本会话当前在哪块画布上作画 */
+    get activeBoard() {
+        return this.project.boards.find((b) => b.id === this.activeId) ?? null;
+    }
+    /** 所有画布级操作的前置：项目还没有画布时给出可执行的指引 */
+    guardBoard() {
+        const active = this.activeBoard;
+        if (!active) {
+            throw new Error(`项目「${this.project.name}」还没有画布：先用 setup_board 支起一块（可带 title 命名，如「登录页」）`);
+        }
+        return active;
     }
     get boardUrl() {
-        return this.project.boardUrl;
+        return `${this.base}/p/${encodeURIComponent(this.project.slug)}/${encodeURIComponent(this.guardBoard().id)}/`;
     }
-    get storePath() {
-        return this.project.storePath;
+    get projectUrlBase() {
+        return `${this.base}/p/${encodeURIComponent(this.project.slug)}/`;
     }
-    projectUrl(path) {
-        return `${this.base}/p/${encodeURIComponent(this.project.slug)}${path}`;
+    /** 支起一块新画布并切过去（旧画布原样保留） */
+    async createBoard(opts) {
+        const res = await fetch(`${this.projectUrlBase}api/boards`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(opts),
+            signal: AbortSignal.timeout(8000),
+        });
+        const body = (await res.json().catch(() => ({})));
+        if (!res.ok || !body.board)
+            throw new Error(body.error ?? `支起画布失败：HTTP ${res.status}`);
+        this.project.boards = body.boards ?? this.project.boards;
+        this.activeId = body.board.id;
+        return body.board;
+    }
+    async listBoards() {
+        const res = await fetch(`${this.projectUrlBase}api/boards`, { signal: AbortSignal.timeout(8000) });
+        if (!res.ok)
+            throw new Error(`读取画布清单失败：HTTP ${res.status}`);
+        const body = (await res.json());
+        this.project.boards = body.boards ?? [];
+        return this.project.boards;
+    }
+    /** 切换活跃画布（按 id 或标题） */
+    async switchBoard(idOrTitle) {
+        const boards = await this.listBoards();
+        const hit = boards.find((b) => b.id === idOrTitle) ?? boards.find((b) => b.title === idOrTitle);
+        if (!hit) {
+            throw new Error(`没有叫「${idOrTitle}」的画布。现有：${boards.map((b) => b.title).join('、')}`);
+        }
+        this.activeId = hit.id;
+        return hit;
+    }
+    boardUrlPath(path) {
+        const board = this.guardBoard();
+        return `${this.base}/p/${encodeURIComponent(this.project.slug)}/${encodeURIComponent(board.id)}${path}`;
     }
     async state() {
-        const res = await fetch(this.projectUrl('/api/state'), { signal: AbortSignal.timeout(8000) });
+        const res = await fetch(this.boardUrlPath('/api/state'), { signal: AbortSignal.timeout(8000) });
         if (!res.ok)
             throw new Error(`读取画板失败：HTTP ${res.status}`);
         return (await res.json());
     }
     async commit(op, actor = 'agent') {
-        const res = await fetch(this.projectUrl('/api/op'), {
+        const res = await fetch(this.boardUrlPath('/api/op'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ op, actor }),
@@ -182,13 +233,13 @@ export class HubClient {
         return this.postAction('/api/redo');
     }
     async postAction(path) {
-        const res = await fetch(this.projectUrl(path), { method: 'POST', signal: AbortSignal.timeout(8000) });
+        const res = await fetch(this.boardUrlPath(path), { method: 'POST', signal: AbortSignal.timeout(8000) });
         if (!res.ok)
             throw new Error(`操作失败：HTTP ${res.status}`);
         return (await res.json());
     }
     async restore(board) {
-        const res = await fetch(this.projectUrl('/api/restore'), {
+        const res = await fetch(this.boardUrlPath('/api/restore'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ board }),
@@ -199,7 +250,7 @@ export class HubClient {
         return (await res.json());
     }
     async flush() {
-        await fetch(this.projectUrl('/api/flush'), { method: 'POST', signal: AbortSignal.timeout(5000) }).catch(() => { });
+        await fetch(this.boardUrlPath('/api/flush'), { method: 'POST', signal: AbortSignal.timeout(5000) }).catch(() => { });
     }
     async screenshot(opts = {}) {
         const q = new URLSearchParams();
@@ -216,7 +267,7 @@ export class HubClient {
         if (opts.hideAnnotations)
             q.set('annotations', 'hide');
         const qs = q.toString();
-        const res = await fetch(this.projectUrl(`/api/screenshot.png${qs ? '?' + qs : ''}`), {
+        const res = await fetch(this.boardUrlPath(`/api/screenshot.png${qs ? '?' + qs : ''}`), {
             signal: AbortSignal.timeout(20000),
         });
         if (!res.ok)
@@ -224,7 +275,7 @@ export class HubClient {
         return Buffer.from(await res.arrayBuffer());
     }
     async svg() {
-        const res = await fetch(this.projectUrl('/api/svg'), { signal: AbortSignal.timeout(15000) });
+        const res = await fetch(this.boardUrlPath('/api/svg'), { signal: AbortSignal.timeout(15000) });
         if (!res.ok)
             throw new Error(`导出 SVG 失败：HTTP ${res.status}`);
         return await res.text();

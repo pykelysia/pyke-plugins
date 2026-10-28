@@ -116,11 +116,15 @@ function applyState(msg) {
   const prevIds = new Set((board?.elements ?? []).map((e) => e.id))
   board = msg.board
   revision = msg.revision
-  if (msg.project?.name) {
-    document.title = `${msg.project.name} · ui-draw`
-    document.getElementById('project-chip').textContent = msg.project.name
-    document.getElementById('project-chip').title = msg.project.projectDir || ''
+  // update 消息不带 project/canvas，只有 init/state 才有：记住最近一次，避免被 update 刷掉
+  if (msg.canvas) lastCanvas = msg.canvas
+  if (msg.project?.name) lastProject = msg.project
+  if (lastProject?.name) {
+    document.title = `${lastCanvas?.title ? lastCanvas.title + ' · ' : ''}${lastProject.name} · ui-draw`
+    document.getElementById('project-chip').textContent = lastProject.name
+    document.getElementById('project-chip').title = lastProject.projectDir || ''
   }
+  if (msg.project?.boards || msg.canvas) renderBoardSelect(msg)
   if (msg.type === 'update') {
     for (const id of msg.changedIds ?? []) {
       if (!prevIds.has(id)) startAnim(id, msg.actor === 'agent' ? 450 : 120)
@@ -147,6 +151,32 @@ function applyState(msg) {
 function startAnim(id, dur) {
   animating.set(id, { start: performance.now(), dur })
 }
+
+// ---------- 画布切换器（一个项目多块画布，一个界面一块） ----------
+const boardSelect = document.getElementById('board-select')
+let boardSelectSig = ''
+let lastCanvas = null
+let lastProject = null
+function renderBoardSelect(msg) {
+  const boards = msg.project?.boards ?? (lastProject?.boards ?? [{ id: msg.canvas?.id, title: msg.canvas?.title }])
+  const current = msg.canvas?.id ?? lastCanvas?.id ?? ''
+  const sig = `${current}|${boards.map((b) => b.id + b.title).join(',')}`
+  if (sig === boardSelectSig) return
+  boardSelectSig = sig
+  boardSelect.innerHTML = ''
+  for (const b of boards) {
+    const opt = document.createElement('option')
+    opt.value = b.id
+    opt.textContent = b.title
+    if (b.id === current) opt.selected = true
+    boardSelect.appendChild(opt)
+  }
+  boardSelect.classList.toggle('single', boards.length <= 1)
+}
+boardSelect.addEventListener('change', () => {
+  const id = boardSelect.value
+  if (id) location.href = `../${encodeURIComponent(id)}/`
+})
 
 // ---------- 视口：缩放 / 平移 ----------
 let userAdjustedView = false // 人手动缩放/平移过之后，窗口变化不再自动适应

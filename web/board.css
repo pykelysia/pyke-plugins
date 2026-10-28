@@ -41,6 +41,13 @@ body {
   background: #eef2ff; color: #2563eb; font-size: 12px; font-weight: 600;
 }
 .brand .chip:empty { display: none; }
+.brand .chip-select {
+  margin-left: 8px; padding: 1px 6px; border-radius: 999px;
+  border: 1px solid #c7d2fe; background: #eef2ff; color: #2563eb;
+  font: 600 12px/1.6 inherit; max-width: 160px; cursor: pointer; outline: none;
+}
+.brand .chip-select:hover { border-color: var(--accent); }
+.brand .chip-select.single { display: none; }
 .top-actions { display: flex; gap: 8px; align-items: center; }
 .top-actions button {
   border: 1px solid var(--line); background: #fff; border-radius: 6px;

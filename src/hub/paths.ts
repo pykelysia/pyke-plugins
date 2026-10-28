@@ -17,6 +17,21 @@ export function projectDirOnDisk(slug: string): string {
   return join(projectsDir(), slug)
 }
 
+/** 一个项目下所有画布的存档目录 */
+export function boardsDirOnDisk(slug: string): string {
+  return join(projectDirOnDisk(slug), 'boards')
+}
+
+/** 单块画布的存档文件 */
+export function boardFileOnDisk(slug: string, boardId: string): string {
+  return join(boardsDirOnDisk(slug), `${boardId}.json`)
+}
+
+/** 项目的画布索引（轻量摘要，不读画布内容也能列出清单） */
+export function boardsIndexFile(slug: string): string {
+  return join(projectDirOnDisk(slug), 'boards.json')
+}
+
 export function runtimeFile(): string {
   return join(dataDir(), 'runtime.json')
 }
