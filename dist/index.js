@@ -25,8 +25,8 @@ async function main() {
     const server = new McpServer({ name: 'ui-draw', version: DAEMON_VERSION });
     registerTools(server, { client });
     await server.connect(new StdioServerTransport());
-    // 预热：会话一开始就把守护进程/本项目画板准备好（失败不阻塞启动）
-    client().catch((err) => console.error('[ui-draw] 连接后台服务失败：', err instanceof Error ? err.message : err));
+    // 懒创建：不预热。会话开始不注册项目、不拉守护进程，
+    // agent 第一次真正调用画板工具时才连（没用到画板的对话不产生任何项目/画布）。
     // MCP 进程随会话结束退出；守护进程继续常驻，画板与存档不受影响
     process.stdin.on('end', () => process.exit(0));
     process.stdin.on('close', () => process.exit(0));
