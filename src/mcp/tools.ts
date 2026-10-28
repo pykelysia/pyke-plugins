@@ -46,10 +46,8 @@ function wrap<A extends Record<string, unknown>>(
   }
 }
 
-const POINTS = z
-  .array(z.tuple([z.number(), z.number()]))
-  .min(1)
-  .describe('点序列 [[x,y],...]，至少 1 个')
+const POINT = z.array(z.number()).length(2)
+const POINTS = z.array(POINT).min(1)
 
 function projectLine(client: HubClient): string {
   return `项目「${client.project.name}」· 画板 ${client.boardUrl}`
@@ -157,7 +155,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
     {
       description: drawDesc('徒手画一笔（像拿铅笔从落笔拖到抬笔）', '。适合画不规则轮廓、连线、圈画'),
       inputSchema: {
-        points: POINTS.describe('笔迹经过的点 [[x,y],...]，至少 2 个'),
+        points: POINTS.min(2).describe('笔迹经过的点 [[x,y],...]，至少 2 个'),
         color: z.string().optional().describe('笔色，默认 ' + INK),
         width: z.number().min(0.5).max(40).optional().describe('笔粗，默认 2；草稿建议 1'),
         dash: z.boolean().optional().describe('虚线'),
