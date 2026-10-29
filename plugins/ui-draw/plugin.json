@@ -1,0 +1,11 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "ui-draw",
+  "version": "0.4.0",
+  "description": "Collaborative sketchpad for designing complete UI screens and states with an agent.",
+  "author": { "name": "pyke" },
+  "homepage": "https://github.com/pykelysia/pyke-plugins/tree/main/plugins/ui-draw",
+  "repository": "https://github.com/pykelysia/pyke-plugins",
+  "license": "MIT",
+  "keywords": ["design", "ui", "wireframe", "mcp"]
+}

@@ -1,0 +1,7 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "my-skill",
+  "version": "0.1.0",
+  "description": "A reusable agent skill.",
+  "author": { "name": "Your Name" }
+}

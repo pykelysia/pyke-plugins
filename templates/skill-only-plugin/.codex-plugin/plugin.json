@@ -1,0 +1,6 @@
+{
+  "name": "my-skill",
+  "version": "0.1.0",
+  "description": "A reusable agent skill.",
+  "skills": "./skills/"
+}

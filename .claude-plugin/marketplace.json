@@ -1,19 +1,16 @@
 {
-  "name": "ui-draw-plugins",
+  "name": "pyke-plugins",
+  "description": "Agent skills and tools for coding workflows.",
   "owner": { "name": "pyke" },
   "plugins": [
     {
       "name": "ui-draw",
-      "source": "./",
+      "source": "./plugins/ui-draw",
       "version": "0.4.0",
       "description": "给 coding agent 的协作画板：像人一样在画板上画 UI 线框，人类在浏览器实时共创批注，定稿导出设计包。",
       "displayName": "ui-draw 协作画板",
-      "displayName_i18n": { "zh-CN": "ui-draw 协作画板", "en": "ui-draw Sketchpad" },
-      "description_i18n": {
-        "zh-CN": "agent 用 MCP 工具一笔一笔画 UI 线框，人类在浏览器里实时观看、框选写批注；定稿后导出 design/ 设计包供实施。一个项目多块画布（一个界面一块），画板在 agent 首次调用时才创建，存档在用户目录。",
-        "en": "Agents sketch UI wireframes stroke by stroke over MCP while humans watch and annotate in the browser; finalize into a design bundle."
-      },
-      "category": "developer-tools"
+      "category": "developer-tools",
+      "tags": ["design", "ui", "wireframe", "mcp"]
     }
   ]
 }

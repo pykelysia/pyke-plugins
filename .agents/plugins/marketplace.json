@@ -1,0 +1,24 @@
+{
+  "name": "pyke-plugins",
+  "interface": {
+    "displayName": "ui-draw Plugins"
+  },
+  "plugins": [
+    {
+      "name": "ui-draw",
+      "source": {
+        "source": "local",
+        "path": "./plugins/ui-draw"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity",
+      "interface": {
+        "displayName": "ui-draw 协作画板",
+        "shortDescription": "通过 MCP 和 agent 一起设计 UI。"
+      }
+    }
+  ]
+}
