@@ -105,6 +105,13 @@ body {
   border: 0; outline: 1px dashed var(--accent); background: rgba(255,255,255,.95);
   resize: none; overflow-wrap: anywhere; scrollbar-width: none;
 }
+#text-resize-handle {
+  position: absolute; z-index: 5; width: 14px; height: 14px;
+  transform: translate(-50%, -50%);
+  border: 2px solid var(--accent); border-radius: 3px; background: #fff;
+  cursor: nwse-resize; touch-action: none;
+}
+#text-resize-handle:hover, #text-resize-handle:active { background: var(--accent); }
 
 #zoom-bar {
   position: absolute; right: 16px; bottom: 16px; z-index: 4;

@@ -1,6 +1,6 @@
 // ui-draw 人类端画板：与 agent 共享同一份状态（服务端权威，WS 双向同步）
 import { FONT_STACK, LINE_HEIGHT, renderBoard } from './shared/render.js'
-import { elementBBox, hitElement, validateBoardDimensions } from './shared/ops.js'
+import { TEXT_BOX_MIN_SIZE, elementBBox, hitElement, validateBoardDimensions } from './shared/ops.js'
 
 const boardCanvas = document.getElementById('board-canvas')
 const overlayCanvas = document.getElementById('overlay-canvas')
@@ -147,6 +147,7 @@ function applyState(msg) {
   const stateIds = new Set(board.elements.map((e) => e.id))
   pendingEls = pendingEls.filter((e) => !stateIds.has(e.id))
   selection = new Set([...selection].filter((id) => stateIds.has(id)))
+  if (textResize && selectedText()?.id !== textResize.id) textResize = null
   preloadImages()
 
   const sig = `${board.width}x${board.height}`
@@ -465,7 +466,10 @@ function render() {
   if (animating.size > 0) scheduleAnim()
   boardCtx.setTransform(backingScaleX, 0, 0, backingScaleY, 0, 0)
   boardCtx.clearRect(0, 0, board.width * view.zoom, board.height * view.zoom)
-  const shown = { ...board, elements: [...board.elements, ...pendingEls] }
+  const elements = textResize?.size
+    ? board.elements.map((el) => el.id === textResize.id ? { ...el, ...textResize.size } : el)
+    : board.elements
+  const shown = { ...board, elements: [...elements, ...pendingEls] }
   renderBoard(boardCtx, shown, { images: imageCache, progress: progressMap(), scale: view.zoom })
   renderOverlay()
   void t
@@ -480,6 +484,13 @@ function renderOverlay() {
   overlayCtx.clearRect(0, 0, W, H)
   overlayCtx.setTransform(backingScaleX * z, 0, 0, backingScaleY * z, 0, 0)
   const lw = 1.5 / z
+  const text = selectedText()
+  const textSize = text && (textResize?.size ?? textBoxSize(text))
+  textResizeHandle.hidden = !text || ws?.readyState !== WebSocket.OPEN
+  if (!textResizeHandle.hidden) {
+    textResizeHandle.style.left = (text.x + textSize.w) * z + 'px'
+    textResizeHandle.style.top = (text.y + textSize.h) * z + 'px'
+  }
 
   // 选中的图元高亮
   if (tool === 'select' && selection.size > 0) {
@@ -488,8 +499,12 @@ function renderOverlay() {
     overlayCtx.setLineDash([4 / z, 3 / z])
     for (const el of board.elements) {
       if (!selection.has(el.id)) continue
-      const b = elementBBox(el)
-      overlayCtx.strokeRect(b.x - 3, b.y - 3, b.w + 6, b.h + 6)
+      if (el === text) {
+        overlayCtx.strokeRect(text.x, text.y, textSize.w, textSize.h)
+      } else {
+        const b = elementBBox(el)
+        overlayCtx.strokeRect(b.x - 3, b.y - 3, b.w + 6, b.h + 6)
+      }
     }
     overlayCtx.setLineDash([])
   }
@@ -574,7 +589,7 @@ function toBoard(ev) {
 let spaceDown = false
 
 overlayCanvas.addEventListener('pointerdown', (ev) => {
-  if (!board) return
+  if (!board || textResize) return
   // 平移：空格 + 左键 / 中键拖
   if (spaceDown || ev.button === 1) {
     ev.preventDefault()
@@ -762,9 +777,11 @@ const textBoxWidth = document.getElementById('text-box-width')
 const textBoxHeight = document.getElementById('text-box-height')
 const textBoxSave = document.getElementById('text-box-save')
 const textBoxHelp = document.getElementById('text-box-help')
+const textResizeHandle = document.getElementById('text-resize-handle')
 let newTextBoxSize = { w: 240, h: 80 }
 let textBoxSignature = ''
 let textDraft = null
+let textResize = null
 
 function selectedText() {
   if (!board || tool !== 'select' || selection.size !== 1) return
@@ -785,19 +802,19 @@ function updateTextBoxControls() {
   textBoxWidth.value = Math.max(1, size.w)
   textBoxHeight.value = Math.max(1, size.h)
   textBoxHelp.textContent = creating
-    ? '设置宽高后，点击画布输入文字。'
-    : '按宽度自动换行，超出高度的文字会隐藏。'
+    ? '设置宽高后点击画布输入。用「选择」（V）选中已有文字可改尺寸。'
+    : '拖动蓝框右下角，或在这里输入精确宽高。'
   textBoxSave.parentElement.hidden = creating
 }
 
 function textBoxSize(el) {
-  if (el.w !== undefined && el.h !== undefined) return el
+  if (el.w !== undefined && el.h !== undefined) return { w: el.w, h: el.h }
   const lines = el.content.split('\n')
   boardCtx.save()
   boardCtx.font = `${el.size}px ${FONT_STACK}`
   const w = lines.reduce((max, line) => Math.max(max, boardCtx.measureText(line).width), 0)
   boardCtx.restore()
-  return { w: Math.ceil(w), h: Math.ceil(lines.length * el.size * LINE_HEIGHT) }
+  return { w: Math.max(TEXT_BOX_MIN_SIZE, Math.ceil(w)), h: Math.ceil(lines.length * el.size * LINE_HEIGHT) }
 }
 
 function readTextBoxSize() {
@@ -811,6 +828,42 @@ textBoxForm.addEventListener('submit', (ev) => {
   const { w, h } = readTextBoxSize()
   if (w === el.w && h === el.h) return
   send({ type: 'op', op: { type: 'resizeText', id: el.id, w, h } })
+})
+
+textResizeHandle.addEventListener('click', (ev) => {
+  if (ev.detail === 0) textBoxWidth.focus()
+})
+
+textResizeHandle.addEventListener('pointerdown', (ev) => {
+  const el = selectedText()
+  if (!el || ev.button !== 0 || !ev.isPrimary || textBoxSave.disabled) return
+  ev.preventDefault()
+  textResizeHandle.setPointerCapture(ev.pointerId)
+  textResize = { id: el.id, pointerId: ev.pointerId, start: toBoard(ev), original: textBoxSize(el), size: null }
+})
+
+textResizeHandle.addEventListener('pointermove', (ev) => {
+  if (ev.pointerId !== textResize?.pointerId) return
+  const p = toBoard(ev)
+  const { start, original } = textResize
+  const w = Math.max(TEXT_BOX_MIN_SIZE, original.w + snap(p.x - start.x))
+  const h = Math.max(TEXT_BOX_MIN_SIZE, original.h + snap(p.y - start.y))
+  textResize.size = w === original.w && h === original.h ? null : { w, h }
+  render()
+})
+
+textResizeHandle.addEventListener('pointerup', (ev) => {
+  if (ev.pointerId !== textResize?.pointerId) return
+  const { id, size } = textResize
+  textResize = null
+  if (size) send({ type: 'op', op: { type: 'resizeText', id, ...size } })
+  render()
+})
+
+textResizeHandle.addEventListener('lostpointercapture', (ev) => {
+  if (ev.pointerId !== textResize?.pointerId) return
+  textResize = null
+  render()
 })
 
 function positionTextInput() {
@@ -1042,7 +1095,12 @@ document.addEventListener('keydown', (ev) => {
   else if ((ev.key === 'Delete' || ev.key === 'Backspace') && selection.size > 0) {
     ev.preventDefault()
     send({ type: 'op', op: { type: 'deleteElements', ids: [...selection] } })
-  } else if (ev.key === 'Escape') { selection.clear(); renderOverlay(); updateSelectionControls() }
+  } else if (ev.key === 'Escape') {
+    textResize = null
+    selection.clear()
+    render()
+    updateSelectionControls()
+  }
   else if (ev.code === 'Space') { spaceDown = true; overlayCanvas.classList.add('panning') }
   else {
     const keyMap = { v: 'select', p: 'pen', l: 'line', r: 'rect', o: 'ellipse', a: 'arrow', t: 'text', e: 'eraser', n: 'annotate' }
@@ -1081,6 +1139,8 @@ document.addEventListener('paste', (ev) => {
 
 // ---------- 工具栏 / 顶栏 ----------
 function setTool(t) {
+  const wasResizing = textResize !== null
+  textResize = null
   tool = t
   document.querySelectorAll('.tool').forEach((b) => b.classList.toggle('active', b.dataset.tool === t))
   overlayCanvas.classList.toggle('selecting', t === 'select')
@@ -1088,7 +1148,8 @@ function setTool(t) {
   if (t !== 'select') selection.clear()
   updateSelectionControls()
   if (t === 'annotate') ensureAnnoLayer()
-  renderOverlay()
+  if (wasResizing) render()
+  else renderOverlay()
 }
 
 function ensureAnnoLayer() {
@@ -1177,6 +1238,12 @@ function setStatus(connected) {
   updateStatusText()
   updateBoardControls()
   updateTextBoxControls()
+  if (!connected && textResize) {
+    textResize = null
+    render()
+  } else {
+    renderOverlay()
+  }
 }
 function updateStatusText() {
   if (!board) return
