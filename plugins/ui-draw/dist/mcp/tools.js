@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { BOARD_MIN_SIZE, BOARD_MAX_WIDTH, BOARD_MAX_HEIGHT, hitElement, nextAnnotationNumber, validateBoardDimensions } from '../board/ops.js';
+import { BOARD_MIN_SIZE, BOARD_MAX_WIDTH, BOARD_MAX_HEIGHT, TEXT_BOX_MIN_SIZE, hitElement, nextAnnotationNumber, validateBoardDimensions } from '../board/ops.js';
 import { annotationsOf, formatAnnotations, inspectBoard } from '../board/describe.js';
 import { boundedRasterScale, decodeImageSize } from '../render/raster.js';
 import { defaultBoardSavePath, defaultDesignDir, loadBoardFile, saveBoardFile, writeDesignBundle } from '../persist.js';
@@ -251,10 +251,12 @@ export function registerTools(server, ctx) {
         return ok(`已在「${el.layer}」层画了一个箭头，图元 id：${el.id}`);
     }, ctx));
     server.registerTool('write_text', {
-        description: drawDesc('写下一段文字', '。(x,y) 是文字左上角。支持 \\n 换行。标题、按钮文案、标签、说明都用它，不要用笔手写文字'),
+        description: drawDesc('写下一段文字', '。(x,y) 是文字左上角。支持 \\n 换行。可同时设置 w 和 h 创建固定尺寸文本框，按宽度自动换行，超出高度的部分会隐藏'),
         inputSchema: {
             x: z.number(), y: z.number(),
             content: z.string().min(1).describe('文字内容，支持换行'),
+            w: z.number().min(TEXT_BOX_MIN_SIZE).optional().describe('文本框宽度（px），与 h 同时设置'),
+            h: z.number().min(TEXT_BOX_MIN_SIZE).optional().describe('文本框高度（px），与 w 同时设置'),
             size: z.number().min(8).max(120).optional().describe('字号，默认 16；页面大标题建议 24-32'),
             color: z.string().optional(),
         },
@@ -344,6 +346,18 @@ export function registerTools(server, ctx) {
         return ok(`已标记 ${targets.length} 条批注为已解决：${targets.map((a) => `#${a.n}`).join('、')}`);
     }, ctx));
     // ---------- 改 ----------
+    server.registerTool('resize_text', {
+        description: '设置已有文字的文本框宽高，保留位置、内容和字号。文字按新宽度换行，超出高度的部分会隐藏。可撤销。',
+        inputSchema: {
+            id: z.string().min(1).describe('文字图元 id（来自 write_text 或 inspect_board）'),
+            w: z.number().min(TEXT_BOX_MIN_SIZE).describe('新宽度（px）'),
+            h: z.number().min(TEXT_BOX_MIN_SIZE).describe('新高度（px）'),
+        },
+    }, wrap(async (args, c) => {
+        const client = await c.client();
+        await client.commit({ type: 'resizeText', ...args });
+        return ok(`已将文本框 ${args.id} 调整为 ${args.w} × ${args.h} px`);
+    }, ctx));
     server.registerTool('erase', {
         description: '用橡皮在当前图层上划过：笔迹经过之处碰到的图元会被擦掉（整图元删除）。points 是划过的点序列。',
         inputSchema: {

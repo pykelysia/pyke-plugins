@@ -1,5 +1,5 @@
 // ui-draw 人类端画板：与 agent 共享同一份状态（服务端权威，WS 双向同步）
-import { renderBoard } from './shared/render.js'
+import { FONT_STACK, LINE_HEIGHT, renderBoard } from './shared/render.js'
 import { elementBBox, hitElement, validateBoardDimensions } from './shared/ops.js'
 
 const boardCanvas = document.getElementById('board-canvas')
@@ -159,7 +159,7 @@ function applyState(msg) {
   renderLayersPanel()
   renderAnnoPanel()
   updateStatusText()
-  updateCopyButton()
+  updateSelectionControls()
   updateBoardControls()
 }
 
@@ -357,6 +357,7 @@ function applyView() {
   overlayCanvas.style.height = hpx + 'px'
 
   document.getElementById('zoom-label').textContent = Math.round(view.zoom * 100) + '%'
+  positionTextInput()
   render()
 }
 
@@ -600,7 +601,7 @@ overlayCanvas.addEventListener('pointerdown', (ev) => {
       selection = new Set()
       gesture = { type: 'marquee', start: p, cur: p }
     }
-    updateCopyButton()
+    updateSelectionControls()
     renderOverlay()
     return
   }
@@ -614,6 +615,7 @@ overlayCanvas.addEventListener('pointerdown', (ev) => {
     return
   }
   if (tool === 'text') {
+    ev.preventDefault()
     openTextInput(p)
     return
   }
@@ -683,7 +685,7 @@ overlayCanvas.addEventListener('pointerup', () => {
           .map((el) => el.id),
       )
     }
-    updateCopyButton()
+    updateSelectionControls()
     renderOverlay()
   } else if (g.type === 'annotate-marquee') {
     const r = normRect(g.start, g.cur)
@@ -755,32 +757,103 @@ function collectEraseHits(p) {
 }
 
 // ---------- 文字工具 ----------
-let textPos = null
-function openTextInput(p) {
-  textPos = p
-  textInput.style.display = 'block'
-  textInput.style.left = p.x * view.zoom + 'px'
-  textInput.style.top = p.y * view.zoom + 'px'
-  textInput.style.fontSize = fontSize * view.zoom + 'px'
-  textInput.value = ''
-  setTimeout(() => textInput.focus(), 0)
+const textBoxForm = document.getElementById('text-box-form')
+const textBoxWidth = document.getElementById('text-box-width')
+const textBoxHeight = document.getElementById('text-box-height')
+const textBoxSave = document.getElementById('text-box-save')
+const textBoxHelp = document.getElementById('text-box-help')
+let newTextBoxSize = { w: 240, h: 80 }
+let textBoxSignature = ''
+let textDraft = null
+
+function selectedText() {
+  if (!board || tool !== 'select' || selection.size !== 1) return
+  const el = board.elements.find((e) => selection.has(e.id))
+  if (el?.kind === 'text' && board.layers.some((l) => l.name === el.layer && l.visible)) return el
 }
-function commitText() {
-  const content = textInput.value.trim()
-  textInput.style.display = 'none'
-  if (content && textPos) {
-    commitElement({
-      id: uid(), kind: 'text', layer: board.activeLayer,
-      x: snap(textPos.x), y: snap(textPos.y), content, size: fontSize, color,
-    })
+
+function updateTextBoxControls() {
+  const el = selectedText()
+  const creating = tool === 'text'
+  const signature = creating ? 'new' : el ? JSON.stringify([el.id, el.w, el.h]) : ''
+  textBoxSave.disabled = ws?.readyState !== WebSocket.OPEN
+  if (signature === textBoxSignature) return
+  textBoxSignature = signature
+  textBoxForm.hidden = !signature
+  if (!signature) return
+  const size = el ? textBoxSize(el) : newTextBoxSize
+  textBoxWidth.value = Math.max(1, size.w)
+  textBoxHeight.value = Math.max(1, size.h)
+  textBoxHelp.textContent = creating
+    ? '设置宽高后，点击画布输入文字。'
+    : '按宽度自动换行，超出高度的文字会隐藏。'
+  textBoxSave.parentElement.hidden = creating
+}
+
+function textBoxSize(el) {
+  if (el.w !== undefined && el.h !== undefined) return el
+  const lines = el.content.split('\n')
+  boardCtx.save()
+  boardCtx.font = `${el.size}px ${FONT_STACK}`
+  const w = lines.reduce((max, line) => Math.max(max, boardCtx.measureText(line).width), 0)
+  boardCtx.restore()
+  return { w: Math.ceil(w), h: Math.ceil(lines.length * el.size * LINE_HEIGHT) }
+}
+
+function readTextBoxSize() {
+  return { w: textBoxWidth.valueAsNumber, h: textBoxHeight.valueAsNumber }
+}
+
+textBoxForm.addEventListener('submit', (ev) => {
+  ev.preventDefault()
+  const el = selectedText()
+  if (!el || textBoxSave.disabled) return
+  const { w, h } = readTextBoxSize()
+  if (w === el.w && h === el.h) return
+  send({ type: 'op', op: { type: 'resizeText', id: el.id, w, h } })
+})
+
+function positionTextInput() {
+  if (!textDraft) return
+  const { x, y, w, h, size } = textDraft
+  const z = view.zoom
+  Object.assign(textInput.style, {
+    left: x * z + 'px', top: y * z + 'px', width: w * z + 'px', height: h * z + 'px',
+    fontSize: size * z + 'px',
+  })
+}
+
+textInput.style.fontFamily = FONT_STACK
+textInput.style.lineHeight = LINE_HEIGHT
+
+function openTextInput(p) {
+  if (!textBoxForm.reportValidity()) return
+  if (textDraft) commitText()
+  newTextBoxSize = readTextBoxSize()
+  textDraft = {
+    id: uid(), kind: 'text', layer: board.activeLayer,
+    x: snap(p.x), y: snap(p.y), ...newTextBoxSize, size: fontSize, color,
   }
-  textPos = null
+  positionTextInput()
+  textInput.style.color = color
+  textInput.style.display = 'block'
+  textInput.value = ''
+  textInput.focus()
+}
+function commitText(save = true) {
+  if (!textDraft) return
+  const content = textInput.value.trim()
+  const element = { ...textDraft, content }
+  textDraft = null
+  textInput.style.display = 'none'
+  if (save && content) commitElement(element)
 }
 textInput.addEventListener('keydown', (ev) => {
+  if (ev.isComposing) return
   if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); commitText() }
-  if (ev.key === 'Escape') { textInput.style.display = 'none'; textPos = null }
+  if (ev.key === 'Escape') { ev.preventDefault(); commitText(false) }
 })
-textInput.addEventListener('blur', () => { if (textInput.style.display === 'block') commitText() })
+textInput.addEventListener('blur', () => commitText())
 
 // ---------- 批注 ----------
 const annoModal = document.getElementById('anno-modal')
@@ -900,10 +973,11 @@ function renderAnnoPanel() {
 }
 
 // ---------- 复制选区图 ----------
-function updateCopyButton() {
+function updateSelectionControls() {
   const btn = document.getElementById('copy-selection')
   btn.disabled = selection.size === 0 || !board
   btn.textContent = selection.size > 0 ? `复制选区图 (${selection.size})` : '复制选区图'
+  updateTextBoxControls()
 }
 
 async function copySelectionImage() {
@@ -968,7 +1042,7 @@ document.addEventListener('keydown', (ev) => {
   else if ((ev.key === 'Delete' || ev.key === 'Backspace') && selection.size > 0) {
     ev.preventDefault()
     send({ type: 'op', op: { type: 'deleteElements', ids: [...selection] } })
-  } else if (ev.key === 'Escape') { selection.clear(); renderOverlay(); updateCopyButton() }
+  } else if (ev.key === 'Escape') { selection.clear(); renderOverlay(); updateSelectionControls() }
   else if (ev.code === 'Space') { spaceDown = true; overlayCanvas.classList.add('panning') }
   else {
     const keyMap = { v: 'select', p: 'pen', l: 'line', r: 'rect', o: 'ellipse', a: 'arrow', t: 'text', e: 'eraser', n: 'annotate' }
@@ -1011,7 +1085,8 @@ function setTool(t) {
   document.querySelectorAll('.tool').forEach((b) => b.classList.toggle('active', b.dataset.tool === t))
   overlayCanvas.classList.toggle('selecting', t === 'select')
   overlayCanvas.style.cursor = t === 'select' ? 'default' : 'crosshair'
-  if (t !== 'select') { selection.clear(); updateCopyButton() }
+  if (t !== 'select') selection.clear()
+  updateSelectionControls()
   if (t === 'annotate') ensureAnnoLayer()
   renderOverlay()
 }
@@ -1034,7 +1109,7 @@ document.getElementById('inp-width').addEventListener('change', (e) => { width =
 document.getElementById('inp-fill').addEventListener('input', (e) => { fillColor = e.target.value })
 document.getElementById('inp-fill-on').addEventListener('change', (e) => { fillOn = !e.target.checked })
 document.getElementById('inp-dash').addEventListener('change', (e) => { dash = e.target.checked })
-document.getElementById('inp-size').addEventListener('change', (e) => { fontSize = Number(e.target.value) || 16 })
+document.getElementById('inp-size').addEventListener('change', (e) => { fontSize = clamp(Number(e.target.value) || 16, 8, 120) })
 
 document.getElementById('btn-undo').addEventListener('click', () => send({ type: 'undo' }))
 document.getElementById('btn-redo').addEventListener('click', () => send({ type: 'redo' }))
@@ -1101,6 +1176,7 @@ function setStatus(connected) {
   document.getElementById('disconnected-banner').classList.toggle('show', !connected)
   updateStatusText()
   updateBoardControls()
+  updateTextBoxControls()
 }
 function updateStatusText() {
   if (!board) return

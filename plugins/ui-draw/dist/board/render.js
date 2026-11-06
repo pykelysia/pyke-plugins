@@ -179,6 +179,55 @@ function drawArrow(ctx, el, t) {
 }
 export const FONT_STACK = '"Microsoft YaHei", "PingFang SC", sans-serif';
 export const LINE_HEIGHT = 1.4;
+const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+function* wrapParagraph(paragraph, width, measure) {
+    let line = '';
+    let spaces = '';
+    for (const [token] of paragraph.matchAll(/\s+|\S+/gu)) {
+        if (/^\s/u.test(token)) {
+            spaces = token;
+            continue;
+        }
+        const word = spaces + token;
+        spaces = '';
+        if (measure(line + word) <= width) {
+            line += word;
+            continue;
+        }
+        const nextWord = line ? token : word;
+        if (line)
+            yield line;
+        line = '';
+        if (measure(nextWord) <= width) {
+            line = nextWord;
+            continue;
+        }
+        // 长词和无空格文本按字素拆行，保留组合字符和 emoji。
+        for (const { segment } of graphemes.segment(nextWord)) {
+            if (line && measure(line + segment) > width) {
+                yield line;
+                line = '';
+            }
+            line += segment;
+        }
+    }
+    yield line;
+}
+export function textLines(el, measure) {
+    const paragraphs = el.content.split(/\r\n?|\n/);
+    if (el.w === undefined || el.h === undefined)
+        return paragraphs;
+    const maxLines = Math.max(1, Math.ceil(el.h / (el.size * LINE_HEIGHT)));
+    const lines = [];
+    for (const paragraph of paragraphs) {
+        for (const line of wrapParagraph(paragraph, el.w, measure)) {
+            lines.push(line);
+            if (lines.length >= maxLines)
+                return lines;
+        }
+    }
+    return lines;
+}
 function drawText(ctx, el, t) {
     ctx.save();
     ctx.fillStyle = el.color;
@@ -187,7 +236,12 @@ function drawText(ctx, el, t) {
     ctx.textBaseline = 'top';
     if (t < 1)
         ctx.globalAlpha = Math.max(0.15, t);
-    const lines = el.content.split('\n');
+    if (el.w !== undefined && el.h !== undefined) {
+        ctx.beginPath();
+        ctx.rect(el.x, el.y, el.w, el.h);
+        ctx.clip();
+    }
+    const lines = textLines(el, (line) => ctx.measureText(line).width);
     const lineH = el.size * LINE_HEIGHT;
     lines.forEach((line, i) => {
         ctx.fillText(line, el.x, el.y + i * lineH);

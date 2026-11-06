@@ -1,4 +1,4 @@
-import { Board, Element, Layer } from './types.js'
+import { Board, Element, Layer, TextElement } from './types.js'
 
 /**
  * 环境无关的 2D 上下文接口：@napi-rs/canvas 与浏览器 CanvasRenderingContext2D
@@ -21,6 +21,8 @@ export interface Ctx2D {
   moveTo(x: number, y: number): void
   lineTo(x: number, y: number): void
   arc(x: number, y: number, r: number, start: number, end: number): void
+  rect(x: number, y: number, w: number, h: number): void
+  clip(): void
   ellipse(cx: number, cy: number, rx: number, ry: number, rotation: number, start: number, end: number): void
   quadraticCurveTo(cpx: number, cpy: number, x: number, y: number): void
   stroke(): void
@@ -255,14 +257,68 @@ function drawArrow(
 export const FONT_STACK = '"Microsoft YaHei", "PingFang SC", sans-serif'
 export const LINE_HEIGHT = 1.4
 
-function drawText(ctx: Ctx2D, el: { x: number; y: number; content: string; size: number; color: string }, t: number) {
+const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+
+function* wrapParagraph(paragraph: string, width: number, measure: (text: string) => number) {
+  let line = ''
+  let spaces = ''
+  for (const [token] of paragraph.matchAll(/\s+|\S+/gu)) {
+    if (/^\s/u.test(token)) {
+      spaces = token
+      continue
+    }
+    const word = spaces + token
+    spaces = ''
+    if (measure(line + word) <= width) {
+      line += word
+      continue
+    }
+    const nextWord = line ? token : word
+    if (line) yield line
+    line = ''
+    if (measure(nextWord) <= width) {
+      line = nextWord
+      continue
+    }
+    // 长词和无空格文本按字素拆行，保留组合字符和 emoji。
+    for (const { segment } of graphemes.segment(nextWord)) {
+      if (line && measure(line + segment) > width) {
+        yield line
+        line = ''
+      }
+      line += segment
+    }
+  }
+  yield line
+}
+
+export function textLines(el: TextElement, measure: (text: string) => number): string[] {
+  const paragraphs = el.content.split(/\r\n?|\n/)
+  if (el.w === undefined || el.h === undefined) return paragraphs
+  const maxLines = Math.max(1, Math.ceil(el.h / (el.size * LINE_HEIGHT)))
+  const lines: string[] = []
+  for (const paragraph of paragraphs) {
+    for (const line of wrapParagraph(paragraph, el.w, measure)) {
+      lines.push(line)
+      if (lines.length >= maxLines) return lines
+    }
+  }
+  return lines
+}
+
+function drawText(ctx: Ctx2D, el: TextElement, t: number) {
   ctx.save()
   ctx.fillStyle = el.color
   ctx.font = `${el.size}px ${FONT_STACK}`
   ctx.textAlign = 'left'
   ctx.textBaseline = 'top'
   if (t < 1) ctx.globalAlpha = Math.max(0.15, t)
-  const lines = el.content.split('\n')
+  if (el.w !== undefined && el.h !== undefined) {
+    ctx.beginPath()
+    ctx.rect(el.x, el.y, el.w, el.h)
+    ctx.clip()
+  }
+  const lines = textLines(el, (line) => ctx.measureText(line).width)
   const lineH = el.size * LINE_HEIGHT
   lines.forEach((line, i) => {
     ctx.fillText(line, el.x, el.y + i * lineH)

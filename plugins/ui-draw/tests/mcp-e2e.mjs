@@ -89,6 +89,16 @@ r = await clientA.callTool({ name: 'look_at_board', arguments: {} })
 const img = r.content.find((c) => c.type === 'image')
 assert(!!img && img.mimeType === 'image/png' && img.data.length > 3000, 'look_at_board 走守护进程渲染返回 PNG')
 
+r = await clientA.callTool({ name: 'write_text', arguments: { x: 20, y: 360, content: '文本框自动换行', w: 64, h: 48 } })
+const textId = text(r).match(/图元 id：(e\w+)/)?.[1]
+assert(!r.isError && !!textId, 'write_text 支持指定文本框宽高')
+r = await clientA.callTool({ name: 'resize_text', arguments: { id: textId, w: 48, h: 64 } })
+assert(!r.isError, 'resize_text 调整已有文本框')
+r = await clientA.callTool({ name: 'inspect_board', arguments: {} })
+assert(text(r).includes(`[${textId}] 文字 (20,360) 48×64 · 「文本框自动换行」`), '文本框尺寸与原文通过 inspect_board 读取')
+r = await clientA.callTool({ name: 'write_text', arguments: { x: 20, y: 360, content: '缺少高度', w: 64 } })
+assert(r.isError, 'write_text 要求宽高成对传入')
+
 // ========== agent B：项目 B（同一守护进程，自动标题画布） ==========
 const clientB = await connect(projB)
 r = await clientB.callTool({ name: 'inspect_board', arguments: {} })

@@ -24,7 +24,7 @@
     <button class="tool" data-tool="rect" title="矩形 (R)">▭</button>
     <button class="tool" data-tool="ellipse" title="椭圆 (O)">◯</button>
     <button class="tool" data-tool="arrow" title="箭头 (A)">➤</button>
-    <button class="tool" data-tool="text" title="文字 (T)">T</button>
+    <button class="tool" data-tool="text" title="文字 (T)：设置宽高后点击画布">T</button>
     <button class="tool" data-tool="eraser" title="橡皮 (E)">🧽</button>
     <button class="tool annotate-tool" data-tool="annotate" title="批注：框选区域并写说明给 agent (N)">📝</button>
     <div class="sep"></div>
@@ -48,7 +48,7 @@
     <div id="canvas-wrap">
       <canvas id="board-canvas"></canvas>
       <canvas id="overlay-canvas"></canvas>
-      <textarea id="text-input" spellcheck="false" placeholder="输入文字，Enter 提交"></textarea>
+      <textarea id="text-input" aria-label="文本框内容" spellcheck="false" placeholder="输入文字，Enter 提交"></textarea>
     </div>
     <div id="zoom-bar">
       <button id="zoom-out" title="缩小 (Ctrl+-)">−</button>
@@ -72,6 +72,15 @@
         <button id="btn-delete-board" class="danger" disabled>删除画布</button>
       </div>
     </section>
+    <form id="text-box-form" aria-labelledby="text-box-title" hidden>
+      <div class="panel-title" id="text-box-title">文本框</div>
+      <div class="size-fields">
+        <label for="text-box-width">宽度（px）<input id="text-box-width" type="number" min="1" step="any" required /></label>
+        <label for="text-box-height">高度（px）<input id="text-box-height" type="number" min="1" step="any" required /></label>
+      </div>
+      <p id="text-box-help" class="hint"></p>
+      <div class="board-actions"><button id="text-box-save" type="submit">应用尺寸</button></div>
+    </form>
     <div class="panel-title">图层 <span class="hint">（双击改名）</span></div>
     <ul id="layer-list"></ul>
     <button id="btn-add-layer">＋ 新建图层</button>

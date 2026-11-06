@@ -102,10 +102,8 @@ body {
 #overlay-canvas.panning-active { cursor: grabbing; }
 #text-input {
   position: absolute; display: none; z-index: 5;
-  border: 1px dashed var(--accent); outline: none; background: rgba(255,255,255,.95);
-  font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
-  padding: 2px 4px; resize: both; min-width: 60px; min-height: 24px;
-  line-height: 1.4;
+  border: 0; outline: 1px dashed var(--accent); background: rgba(255,255,255,.95);
+  resize: none; overflow-wrap: anywhere; scrollbar-width: none;
 }
 
 #zoom-bar {
@@ -145,6 +143,10 @@ body {
 .panel-title { font-weight: 700; }
 .hint { color: var(--muted); font-size: 12px; }
 #board-panel { display: flex; flex-direction: column; gap: 6px; padding-bottom: 12px; margin-bottom: 2px; border-bottom: 1px solid var(--line); }
+#text-box-form:not([hidden]) { display: grid; gap: 6px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+#text-box-form .size-fields { gap: 8px; }
+#text-box-form input { padding: 4px 6px; }
+#text-box-form .board-actions[hidden] { display: none; }
 #board-name { overflow-wrap: anywhere; }
 #board-dimensions { font-variant-numeric: tabular-nums; }
 .board-actions { display: flex; gap: 8px; margin-top: 2px; }

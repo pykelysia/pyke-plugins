@@ -69,6 +69,9 @@ export interface TextElement extends BaseElement {
   kind: 'text'
   x: number
   y: number
+  /** 文本框尺寸同时设置；省略时沿用自由文字布局。 */
+  w?: number
+  h?: number
   content: string
   size: number
   color: string

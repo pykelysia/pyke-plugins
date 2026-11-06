@@ -11,6 +11,7 @@ export type Op =
   | { type: 'addElements'; elements: Element[] }
   | { type: 'deleteElements'; ids: string[] }
   | { type: 'moveElements'; ids: string[]; dx: number; dy: number }
+  | { type: 'resizeText'; id: string; w: number; h: number }
   | { type: 'clear'; layer?: string }
   | { type: 'setActiveLayer'; name: string }
   | { type: 'addLayer'; name: string }
@@ -26,6 +27,13 @@ export const BOARD_MIN_SIZE = 200
 export const BOARD_MAX_WIDTH = 4096
 export const BOARD_MAX_HEIGHT = 16384
 export const BOARD_MAX_AREA = 33_554_432
+export const TEXT_BOX_MIN_SIZE = 1
+
+export function validateTextBoxDimensions(w: number | undefined, h: number | undefined): void {
+  if (w === undefined || h === undefined || !Number.isFinite(w) || !Number.isFinite(h) || w < TEXT_BOX_MIN_SIZE || h < TEXT_BOX_MIN_SIZE) {
+    throw new OpError(`文本框宽高必须是至少 ${TEXT_BOX_MIN_SIZE} px 的有限数值`)
+  }
+}
 
 /** 统一限制画布尺寸，防止异常尺寸造成不可用的浏览器画布或过量内存分配。 */
 export function validateBoardDimensions(width: number, height: number): void {
@@ -95,6 +103,14 @@ export function applyOp(board: Board, op: Op): Board {
         }
       }
       next.elements = next.elements.map((e) => (ids.has(e.id) ? translateElement(e, op.dx, op.dy) : e))
+      return next
+    }
+    case 'resizeText': {
+      const el = next.elements.find((e) => e.id === op.id)
+      if (!el || el.kind !== 'text') throw new OpError(`文本图元 ${op.id} 不存在`)
+      validateTextBoxDimensions(op.w, op.h)
+      el.w = op.w
+      el.h = op.h
       return next
     }
     case 'clear': {
@@ -194,6 +210,7 @@ export function validateElement(el: Element) {
       break
     case 'text':
       if (typeof el.content !== 'string' || el.content.length === 0) throw new OpError('文字内容不能为空')
+      if (el.w !== undefined || el.h !== undefined) validateTextBoxDimensions(el.w, el.h)
       break
   }
 }
@@ -208,6 +225,8 @@ export function opChangedIds(op: Op): string[] {
     case 'deleteElements':
     case 'moveElements':
       return op.ids
+    case 'resizeText':
+      return [op.id]
     case 'setAnnotationStatus':
       return op.ids
     case 'clear':
@@ -255,6 +274,7 @@ export function elementBBox(el: Element): BBox {
     case 'annotation':
       return { x: el.x, y: el.y, w: el.w, h: el.h }
     case 'text': {
+      if (el.w !== undefined && el.h !== undefined) return { x: el.x, y: el.y, w: el.w, h: el.h }
       const lines = el.content.split('\n')
       const lineH = el.size * 1.4
       const w = Math.max(...lines.map((l) => l.length)) * el.size * 0.7

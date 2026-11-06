@@ -1,18 +1,30 @@
+import { createCanvas } from '@napi-rs/canvas';
 import { elementBBox } from '../board/ops.js';
-import { FONT_STACK } from '../board/render.js';
+import { FONT_STACK, LINE_HEIGHT, textLines } from '../board/render.js';
 /** 把画板序列化为矢量 SVG（仅可见图层） */
 export function boardToSvg(board) {
     const parts = [];
     parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${board.width}" height="${board.height}" viewBox="0 0 ${board.width} ${board.height}">`);
     parts.push(`<rect width="${board.width}" height="${board.height}" fill="#ffffff"/>`);
     const visible = new Set(board.layers.filter((l) => l.visible).map((l) => l.name));
+    let textContext;
     for (const el of board.elements) {
         if (!visible.has(el.layer))
             continue;
         // 批注是反馈记录，不进设计矢量图
         if (el.kind === 'annotation')
             continue;
-        parts.push(elementToSvg(el));
+        if (el.kind === 'text' && el.w !== undefined && el.h !== undefined) {
+            textContext ??= createCanvas(1, 1).getContext('2d');
+            textContext.font = `${el.size}px ${FONT_STACK}`;
+            textContext.textBaseline = 'top';
+            const clipId = `text-box-${parts.length}`;
+            parts.push(`<clipPath id="${clipId}"><rect x="${round(el.x)}" y="${round(el.y)}" width="${el.w}" height="${el.h}"/></clipPath>`);
+            parts.push(elementToSvg(el, textContext, clipId));
+        }
+        else {
+            parts.push(elementToSvg(el));
+        }
     }
     parts.push('</svg>');
     return parts.join('\n');
@@ -24,7 +36,7 @@ function strokeAttrs(color, width, dash) {
     const d = dash ? ` stroke-dasharray="${width * 3 + 6} ${width * 2 + 4}"` : '';
     return `stroke="${esc(color)}" stroke-width="${width}" stroke-linecap="round" stroke-linejoin="round"${d}`;
 }
-function elementToSvg(el) {
+function elementToSvg(el, textContext, clipId) {
     switch (el.kind) {
         case 'stroke': {
             const pts = el.points.map(([x, y]) => `${round(x)},${round(y)}`).join(' ');
@@ -55,12 +67,16 @@ function elementToSvg(el) {
                 `</g>`);
         }
         case 'text': {
-            const lineH = el.size * 1.4;
-            const lines = el.content.split('\n');
+            const lineH = el.size * LINE_HEIGHT;
+            const lines = textContext ? textLines(el, (line) => textContext.measureText(line).width) : el.content.split('\n');
             const tspans = lines
-                .map((line, i) => `<tspan x="${round(el.x)}" y="${round(el.y + i * lineH + el.size * 0.8)}">${esc(line)}</tspan>`)
+                .map((line, i) => {
+                const ascent = textContext && line ? -textContext.measureText(line).alphabeticBaseline : el.size * 0.8;
+                return `<tspan x="${round(el.x)}" y="${round(el.y + i * lineH + ascent)}">${esc(line)}</tspan>`;
+            })
                 .join('');
-            return `<text font-family='${FONT_STACK.replace(/"/g, '')}' font-size="${el.size}" fill="${esc(el.color)}">${tspans}</text>`;
+            const clip = clipId ? ` clip-path="url(#${clipId})" xml:space="preserve"` : '';
+            return `<text font-family='${FONT_STACK.replace(/"/g, '')}' font-size="${el.size}" fill="${esc(el.color)}"${clip}>${tspans}</text>`;
         }
         case 'image':
             return `<image x="${round(el.x)}" y="${round(el.y)}" width="${round(el.w)}" height="${round(el.h)}" href="${esc(el.src)}"/>`;
