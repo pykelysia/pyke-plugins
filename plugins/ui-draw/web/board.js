@@ -148,6 +148,10 @@ function applyState(msg) {
   pendingEls = pendingEls.filter((e) => !stateIds.has(e.id))
   selection = new Set([...selection].filter((id) => stateIds.has(id)))
   if (textResize && selectedText()?.id !== textResize.id) textResize = null
+  if (textDraft?.originalContent !== undefined) {
+    const el = board.elements.find((e) => e.id === textDraft.element.id)
+    if (el?.kind === 'text') textDraft.element = { ...el, ...textBoxSize(el) }
+  }
   preloadImages()
 
   const sig = `${board.width}x${board.height}`
@@ -406,7 +410,7 @@ function tickFlash() {
 stage.addEventListener(
   'wheel',
   (ev) => {
-    if (!board) return
+    if (!board || ev.target === textInput) return
     ev.preventDefault()
     if (ev.shiftKey) {
       view.tx -= ev.deltaY
@@ -469,7 +473,11 @@ function render() {
   const elements = textResize?.size
     ? board.elements.map((el) => el.id === textResize.id ? { ...el, ...textResize.size } : el)
     : board.elements
-  const shown = { ...board, elements: [...elements, ...pendingEls] }
+  const editingId = textDraft?.originalContent !== undefined ? textDraft.element.id : undefined
+  const shown = {
+    ...board,
+    elements: [...(editingId ? elements.filter((el) => el.id !== editingId) : elements), ...pendingEls],
+  }
   renderBoard(boardCtx, shown, { images: imageCache, progress: progressMap(), scale: view.zoom })
   renderOverlay()
   void t
@@ -486,7 +494,7 @@ function renderOverlay() {
   const lw = 1.5 / z
   const text = selectedText()
   const textSize = text && (textResize?.size ?? textBoxSize(text))
-  textResizeHandle.hidden = !text || ws?.readyState !== WebSocket.OPEN
+  textResizeHandle.hidden = !text || textDraft?.originalContent !== undefined || ws?.readyState !== WebSocket.OPEN
   if (!textResizeHandle.hidden) {
     textResizeHandle.style.left = (text.x + textSize.w) * z + 'px'
     textResizeHandle.style.top = (text.y + textSize.h) * z + 'px'
@@ -775,6 +783,7 @@ function collectEraseHits(p) {
 const textBoxForm = document.getElementById('text-box-form')
 const textBoxWidth = document.getElementById('text-box-width')
 const textBoxHeight = document.getElementById('text-box-height')
+const textBoxEdit = document.getElementById('text-box-edit')
 const textBoxSave = document.getElementById('text-box-save')
 const textBoxHelp = document.getElementById('text-box-help')
 const textResizeHandle = document.getElementById('text-resize-handle')
@@ -792,8 +801,9 @@ function selectedText() {
 function updateTextBoxControls() {
   const el = selectedText()
   const creating = tool === 'text'
-  const signature = creating ? 'new' : el ? JSON.stringify([el.id, el.w, el.h]) : ''
+  const signature = creating ? 'new' : el ? JSON.stringify([el.id, el.w, el.h, el.w === undefined ? el.content : null]) : ''
   textBoxSave.disabled = ws?.readyState !== WebSocket.OPEN
+  textBoxEdit.disabled = textBoxSave.disabled || textDraft?.originalContent !== undefined
   if (signature === textBoxSignature) return
   textBoxSignature = signature
   textBoxForm.hidden = !signature
@@ -802,8 +812,8 @@ function updateTextBoxControls() {
   textBoxWidth.value = Math.max(1, size.w)
   textBoxHeight.value = Math.max(1, size.h)
   textBoxHelp.textContent = creating
-    ? '设置宽高后点击画布输入。用「选择」（V）选中已有文字可改尺寸。'
-    : '拖动蓝框右下角，或在这里输入精确宽高。'
+    ? '设置宽高后点击画布输入。用「选择」（V）编辑已有文字。'
+    : '双击文字编辑内容。拖动蓝框右下角可调整尺寸。'
   textBoxSave.parentElement.hidden = creating
 }
 
@@ -868,7 +878,7 @@ textResizeHandle.addEventListener('lostpointercapture', (ev) => {
 
 function positionTextInput() {
   if (!textDraft) return
-  const { x, y, w, h, size } = textDraft
+  const { x, y, w, h, size } = textDraft.element
   const z = view.zoom
   Object.assign(textInput.style, {
     left: x * z + 'px', top: y * z + 'px', width: w * z + 'px', height: h * z + 'px',
@@ -879,32 +889,92 @@ function positionTextInput() {
 textInput.style.fontFamily = FONT_STACK
 textInput.style.lineHeight = LINE_HEIGHT
 
+function showTextInput(element, originalContent) {
+  textDraft = { element, originalContent }
+  positionTextInput()
+  const editing = originalContent !== undefined
+  textInput.style.color = editing ? '' : element.color
+  textInput.classList.toggle('editing-existing', editing)
+  textInput.style.display = 'block'
+  textInput.value = originalContent ?? ''
+  textInput.focus({ preventScroll: true })
+  textInput.setSelectionRange(textInput.value.length, textInput.value.length)
+}
+
 function openTextInput(p) {
-  if (!textBoxForm.reportValidity()) return
+  if (textDraft?.originalContent !== undefined || !textBoxForm.reportValidity()) return
   if (textDraft) commitText()
   newTextBoxSize = readTextBoxSize()
-  textDraft = {
+  showTextInput({
     id: uid(), kind: 'text', layer: board.activeLayer,
     x: snap(p.x), y: snap(p.y), ...newTextBoxSize, size: fontSize, color,
-  }
-  positionTextInput()
-  textInput.style.color = color
-  textInput.style.display = 'block'
-  textInput.value = ''
-  textInput.focus()
+  })
 }
-function commitText(save = true) {
+
+function editText(el) {
+  if (el?.kind !== 'text' || textDraft || textResize || textBoxSave.disabled) return
+  selection = new Set([el.id])
+  showTextInput({ ...el, ...textBoxSize(el) }, el.content)
+  updateSelectionControls()
+  render()
+}
+
+overlayCanvas.addEventListener('dblclick', (ev) => {
+  if (!board || tool !== 'select' || ev.shiftKey) return
+  editText(topHit(toBoard(ev)))
+})
+textBoxEdit.addEventListener('click', () => editText(selectedText()))
+
+function closeTextInput() {
   if (!textDraft) return
-  const content = textInput.value.trim()
-  const element = { ...textDraft, content }
+  const editing = textDraft.originalContent !== undefined
   textDraft = null
   textInput.style.display = 'none'
-  if (save && content) commitElement(element)
+  if (editing) {
+    updateTextBoxControls()
+    render()
+  }
 }
+
+async function commitText() {
+  if (!textDraft || textInput.readOnly) return
+  const { element, originalContent } = textDraft
+  const content = textInput.value
+  if (originalContent === undefined) {
+    closeTextInput()
+    if (content.trim()) commitElement({ ...element, content: content.trim() })
+    return
+  }
+  if (content === originalContent.replace(/\r\n?/g, '\n')) {
+    closeTextInput()
+    return
+  }
+  if (!content.trim()) {
+    toast('文字内容不能为空。按 Esc 取消编辑。')
+    return
+  }
+  textInput.readOnly = true
+  try {
+    await boardRequest(`${API_BASE}api/op`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ op: { type: 'editText', id: element.id, content, previousContent: originalContent }, actor: 'human' }),
+    })
+    closeTextInput()
+  } catch (err) {
+    toast('保存文字失败：' + err.message)
+  } finally {
+    textInput.readOnly = false
+  }
+}
+
 textInput.addEventListener('keydown', (ev) => {
   if (ev.isComposing) return
   if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); commitText() }
-  if (ev.key === 'Escape') { ev.preventDefault(); commitText(false) }
+  if (ev.key === 'Escape') {
+    ev.preventDefault()
+    if (!textInput.readOnly) closeTextInput()
+  }
 })
 textInput.addEventListener('blur', () => commitText())
 

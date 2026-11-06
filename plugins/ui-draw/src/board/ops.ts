@@ -12,6 +12,7 @@ export type Op =
   | { type: 'deleteElements'; ids: string[] }
   | { type: 'moveElements'; ids: string[]; dx: number; dy: number }
   | { type: 'resizeText'; id: string; w: number; h: number }
+  | { type: 'editText'; id: string; content: string; previousContent: string }
   | { type: 'clear'; layer?: string }
   | { type: 'setActiveLayer'; name: string }
   | { type: 'addLayer'; name: string }
@@ -105,12 +106,19 @@ export function applyOp(board: Board, op: Op): Board {
       next.elements = next.elements.map((e) => (ids.has(e.id) ? translateElement(e, op.dx, op.dy) : e))
       return next
     }
-    case 'resizeText': {
+    case 'resizeText':
+    case 'editText': {
       const el = next.elements.find((e) => e.id === op.id)
       if (!el || el.kind !== 'text') throw new OpError(`文本图元 ${op.id} 不存在`)
-      validateTextBoxDimensions(op.w, op.h)
-      el.w = op.w
-      el.h = op.h
+      if (op.type === 'resizeText') {
+        validateTextBoxDimensions(op.w, op.h)
+        el.w = op.w
+        el.h = op.h
+      } else {
+        if (el.content !== op.previousContent) throw new OpError('文字已被修改，请重新打开编辑')
+        if (typeof op.content !== 'string' || !op.content.trim()) throw new OpError('文字内容不能为空')
+        el.content = op.content
+      }
       return next
     }
     case 'clear': {
@@ -226,6 +234,7 @@ export function opChangedIds(op: Op): string[] {
     case 'moveElements':
       return op.ids
     case 'resizeText':
+    case 'editText':
       return [op.id]
     case 'setAnnotationStatus':
       return op.ids

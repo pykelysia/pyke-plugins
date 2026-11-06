@@ -105,6 +105,7 @@ body {
   border: 0; outline: 1px dashed var(--accent); background: rgba(255,255,255,.95);
   resize: none; overflow-wrap: anywhere; scrollbar-width: none;
 }
+#text-input.editing-existing { min-width: 72px; min-height: max(24px, 1.4em); color: var(--ink); }
 #text-resize-handle {
   position: absolute; z-index: 5; width: 14px; height: 14px;
   transform: translate(-50%, -50%);

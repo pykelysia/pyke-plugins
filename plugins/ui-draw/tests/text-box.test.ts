@@ -36,6 +36,29 @@ describe('文本框', () => {
     expect(service.revision).toBe(1)
   })
 
+  it.each([text, { ...text, w: 72, h: 48 }])('编辑文字保留图元属性并可撤销重做', (element) => {
+    const service = new BoardService()
+    service.restore({ ...defaultBoard(), elements: [element] })
+    const content = '新的文字\n第二行'
+    service.commit({ type: 'editText', id: element.id, content, previousContent: element.content })
+    expect(service.board.elements[0]).toEqual({ ...element, content })
+    expect(service.undo()).toBe(true)
+    expect(service.board.elements[0]).toEqual(element)
+    expect(service.redo()).toBe(true)
+    expect(service.board.elements[0]).toEqual({ ...element, content })
+  })
+
+  it('拒绝覆盖并发编辑和写入空白文字', () => {
+    const service = new BoardService()
+    service.restore({ ...defaultBoard(), elements: [text] })
+    const op = { type: 'editText' as const, id: text.id, previousContent: text.content }
+    expect(() => service.commit({ ...op, content: ' \n ' })).toThrow(/不能为空/)
+    service.commit({ ...op, content: '已经保存' })
+    expect(() => service.commit({ ...op, content: '过期编辑' })).toThrow(/已被修改/)
+    expect(service.board.elements[0]).toEqual({ ...text, content: '已经保存' })
+    expect(service.revision).toBe(1)
+  })
+
   it('按宽度折行，保留手动换行、英文单词和组合字符', () => {
     const measure = (line: string) => Array.from(line).length * 10
     const content = 'abc de\r\n\r\n甲乙丙丁戊\n👩‍💻xy'

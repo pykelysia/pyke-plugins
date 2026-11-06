@@ -48,7 +48,7 @@
     <div id="canvas-wrap">
       <canvas id="board-canvas"></canvas>
       <canvas id="overlay-canvas"></canvas>
-      <textarea id="text-input" aria-label="文本框内容" spellcheck="false" placeholder="输入文字，Enter 提交"></textarea>
+      <textarea id="text-input" aria-label="文本框内容" title="Enter 保存，Shift+Enter 换行，Esc 取消" spellcheck="false" placeholder="输入文字，Enter 保存"></textarea>
       <button id="text-resize-handle" type="button" aria-label="调整文本框宽高" title="拖动调整文本框宽高" hidden></button>
     </div>
     <div id="zoom-bar">
@@ -80,7 +80,10 @@
         <label for="text-box-height">高度（px）<input id="text-box-height" type="number" min="1" step="any" required /></label>
       </div>
       <p id="text-box-help" class="hint"></p>
-      <div class="board-actions"><button id="text-box-save" type="submit">应用尺寸</button></div>
+      <div class="board-actions">
+        <button id="text-box-edit" type="button">编辑内容</button>
+        <button id="text-box-save" type="submit">应用尺寸</button>
+      </div>
     </form>
     <div class="panel-title">图层 <span class="hint">（双击改名）</span></div>
     <ul id="layer-list"></ul>
