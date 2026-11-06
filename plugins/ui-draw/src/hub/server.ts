@@ -121,7 +121,9 @@ export class HubServer {
   }
 
   private ensureBoard(slug: string, boardId: string): BoardRuntime | undefined {
-    return this.ensureRuntime(slug)?.board(boardId)
+    const rt = this.ensureRuntime(slug)
+    // URL 只按 id 查找，不能把已删除的旧 id 当作同名新画布的标题。
+    return rt?.findBoardMeta(boardId)?.id === boardId ? rt.board(boardId) : undefined
   }
 
   private runtimesState(): Record<string, unknown>[] {
@@ -208,6 +210,7 @@ export class HubServer {
           try {
             validateBoardDimensions(width, height)
             const brt = rt.createBoard(title, { width, height, grid: body?.grid !== false })
+            this.broadcastBoards(rt)
             json(res, 200, {
               board: { id: brt.id, title: brt.title },
               boards: rt.listBoards(),
@@ -219,6 +222,30 @@ export class HubServer {
           return
         }
         json(res, 200, { boards: rt.listBoards() })
+        return
+      }
+      const deleteMatch = rest.match(/^\/api\/boards\/([^/]+)$/)
+      if (deleteMatch) {
+        if (req.method !== 'DELETE') {
+          json(res, 405, { error: '请使用 DELETE 删除画布' })
+          return
+        }
+        const meta = rt.findBoardMeta(deleteMatch[1])
+        if (!meta || meta.id !== deleteMatch[1]) {
+          json(res, 404, { error: '画布不存在或已删除' })
+          return
+        }
+        const deleted = rt.deleteBoard(meta.id)
+        const key = this.boardKey(slug, deleted.id)
+        const projectUrl = `${this.url}/p/${encodeURIComponent(slug)}/`
+        this.broadcast(key, { type: 'board_deleted', projectUrl })
+        for (const ws of this.clients.get(key) ?? []) ws.close(1000, '画布已删除')
+        this.clients.delete(key)
+        this.lastActor.delete(key)
+        this.lastChanged.delete(key)
+        this.registry.touch(slug)
+        this.broadcastBoards(rt)
+        json(res, 200, { deleted, boards: rt.listBoards(), projectUrl })
         return
       }
       if (rest === '/' || rest === '') {
@@ -235,6 +262,10 @@ export class HubServer {
       const boardId = bm[1]
       const brt = this.ensureBoard(slug, boardId)
       if (!brt) {
+        if (bm[2]?.startsWith('/api/')) {
+          json(res, 404, { error: '画布不存在或已删除，请 list_boards 后 switch_board，或 setup_board 新建' })
+          return
+        }
         res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' })
         res.end(
           `<h1>画布不存在</h1><p>项目「${escapeHtml(rt.meta.name)}」里没有画布 ${escapeHtml(boardId)}。</p>` +
@@ -264,6 +295,10 @@ export class HubServer {
       }
       if (brest === '/api/op' && req.method === 'POST') {
         const body = (await readJson(req)) as { op?: Op; actor?: 'agent' | 'human' }
+        if (rt.board(brt.id) !== brt) {
+          json(res, 404, { error: '画布已删除' })
+          return
+        }
         if (!body?.op) {
           json(res, 400, { error: '缺少 op' })
           return
@@ -306,6 +341,10 @@ export class HubServer {
       }
       if (brest === '/api/restore' && req.method === 'POST') {
         const body = (await readJson(req)) as { board?: Board }
+        if (rt.board(brt.id) !== brt) {
+          json(res, 404, { error: '画布已删除' })
+          return
+        }
         if (!body?.board) {
           json(res, 400, { error: '缺少 board' })
           return
@@ -507,6 +546,7 @@ ${boards.length ? `<ul>${rows}</ul>` : '<div class="empty">这个项目还没有
       }
       const m = msg as { type?: string; op?: Op }
       try {
+        if (rt.board(brt.id) !== brt) throw new Error('画布已删除')
         if (m.type === 'op' && m.op) {
           this.trackChange(key, m.op, 'human')
           brt.service.commit(m.op, 'human')
@@ -527,6 +567,12 @@ ${boards.length ? `<ul>${rows}</ul>` : '<div class="empty">这个项目还没有
 
   private sendTo(ws: WebSocket, msg: unknown) {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg))
+  }
+
+  private broadcastBoards(rt: ProjectRuntime) {
+    for (const board of rt.listBoards()) {
+      this.broadcast(this.boardKey(rt.meta.slug, board.id), { type: 'boards_changed', boards: rt.listBoards() })
+    }
   }
 
   private broadcast(key: string, msg: unknown) {

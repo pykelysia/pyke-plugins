@@ -186,6 +186,9 @@ export class HubClient {
   guardBoard(): BoardSummary {
     const active = this.activeBoard
     if (!active) {
+      if (this.project.boards.length > 0) {
+        throw new Error('当前画布不存在或已删除：用 list_boards 查看，再 switch_board 切换，或 setup_board 新建')
+      }
       throw new Error(`项目「${this.project.name}」还没有画布：先用 setup_board 支起一块（可带 title 命名，如「登录页」）`)
     }
     return active
@@ -222,6 +225,21 @@ export class HubClient {
     return this.project.boards
   }
 
+  async deleteBoard(idOrTitle: string): Promise<BoardSummary> {
+    const boards = await this.listBoards()
+    const target = boards.find((b) => b.id === idOrTitle) ?? boards.find((b) => b.title === idOrTitle)
+    if (!target) throw new Error(`画布「${idOrTitle}」不存在或已删除`)
+    const res = await fetch(`${this.projectUrlBase}api/boards/${encodeURIComponent(target.id)}`, {
+      method: 'DELETE',
+      signal: AbortSignal.timeout(8000),
+    })
+    const body = (await res.json()) as { boards: BoardSummary[]; error?: string }
+    if (!res.ok) throw new Error(body.error ?? `删除画布失败：HTTP ${res.status}`)
+    this.project.boards = body.boards
+    if (this.activeId === target.id) this.activeId = null
+    return target
+  }
+
   /** 切换活跃画布（按 id 或标题） */
   async switchBoard(idOrTitle: string): Promise<BoardSummary> {
     const boards = await this.listBoards()
@@ -240,7 +258,13 @@ export class HubClient {
 
   async state(): Promise<{ board: Board; revision: number }> {
     const res = await fetch(this.boardUrlPath('/api/state'), { signal: AbortSignal.timeout(8000) })
-    if (!res.ok) throw new Error(`读取画板失败：HTTP ${res.status}`)
+    if (!res.ok) {
+      if (res.status === 404) {
+        await this.listBoards()
+        throw new Error('当前画布已删除：用 list_boards 查看，再 switch_board 切换，或 setup_board 新建')
+      }
+      throw new Error(`读取画板失败：HTTP ${res.status}`)
+    }
     return (await res.json()) as { board: Board; revision: number }
   }
 

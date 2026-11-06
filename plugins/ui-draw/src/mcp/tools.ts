@@ -108,7 +108,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
   server.registerTool(
     'resize_board',
     {
-      description: '无损扩展当前画布：保留图元、图层与批注，可撤销；只允许扩大或保持宽高。长页面可保持宽度并增加高度，面积不超过 33554432 像素。',
+      description: '修改当前画布尺寸，可增大或缩小，保留图元、图层与批注，可撤销。缩小后超出边界的内容暂时不可见，重新扩大可显示；不缩放或移动图元。面积不超过 33554432 像素。',
       inputSchema: {
         width: z.number().int().min(BOARD_MIN_SIZE).max(BOARD_MAX_WIDTH).optional().describe('目标宽度，省略保持原宽'),
         height: z.number().int().min(BOARD_MIN_SIZE).max(BOARD_MAX_HEIGHT).optional().describe('目标高度，省略保持原高'),
@@ -122,7 +122,23 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
       const height = args.height ?? board.height
       validateBoardDimensions(width, height)
       await client.commit({ type: 'resize', width, height })
-      return ok(`画布已从 ${board.width}×${board.height} 扩展到 ${width}×${height}，原内容已保留（可撤销）。`)
+      const shrunk = width < board.width || height < board.height
+      return ok(`画布已从 ${board.width}×${board.height} 调整到 ${width}×${height}，原内容已保留（可撤销）。${shrunk ? '超出边界的内容暂时不可见，重新扩大画布可显示；图元未缩放或移动。' : ''}`)
+    }, ctx),
+  )
+
+  server.registerTool(
+    'delete_board',
+    {
+      description: '删除本项目指定画布（按 id 或标题），包含所有图层、图元和批注；无法通过 undo 恢复，已导出的设计包和手动快照保留。删除当前画布后须 switch_board 或 setup_board 才能继续作画。',
+      inputSchema: {
+        board: z.string().min(1).describe('要删除的画布 id 或标题，先用 list_boards 核对'),
+      },
+    },
+    wrap(async (args, c) => {
+      const client = await c.client()
+      const deleted = await client.deleteBoard(args.board)
+      return ok(`已删除画布「${deleted.title}」（id=${deleted.id}），剩余 ${client.project.boards.length} 块画布。${client.activeBoard ? `当前仍在「${client.activeBoard.title}」。` : '用 switch_board 切换或 setup_board 新建后继续。'}`)
     }, ctx),
   )
 

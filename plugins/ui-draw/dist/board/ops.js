@@ -37,8 +37,6 @@ export function applyOp(board, op) {
         }
         case 'resize': {
             validateBoardDimensions(op.width, op.height);
-            if (op.width < board.width || op.height < board.height)
-                throw new OpError('画布只能扩大，不能缩小');
             next.width = op.width;
             next.height = op.height;
             return next;

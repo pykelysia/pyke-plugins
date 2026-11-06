@@ -89,6 +89,8 @@ export class BoardRuntime {
     storePath;
     saveTimer = null;
     listeners = new Set();
+    deleted = false;
+    unsubscribe;
     constructor(projectId, id, title, touch) {
         this.projectId = projectId;
         this.id = id;
@@ -96,7 +98,7 @@ export class BoardRuntime {
         this.touch = touch;
         this.storePath = boardFileOnDisk(projectId, id);
         this.load();
-        this.service.subscribe((board) => {
+        this.unsubscribe = this.service.subscribe((board) => {
             this.scheduleSave();
             this.touch(this);
             for (const fn of this.listeners)
@@ -131,6 +133,8 @@ export class BoardRuntime {
         }, 300);
     }
     flush() {
+        if (this.deleted)
+            return;
         if (this.saveTimer) {
             clearTimeout(this.saveTimer);
             this.saveTimer = null;
@@ -154,6 +158,22 @@ export class BoardRuntime {
             /* 忽略 */
         }
     }
+    /** 删除前停止自动存档；旧引用和延迟任务都不能把画布重新写回。 */
+    remove() {
+        try {
+            unlinkSync(this.storePath);
+        }
+        catch (err) {
+            if (err.code !== 'ENOENT')
+                throw err;
+        }
+        this.deleted = true;
+        if (this.saveTimer)
+            clearTimeout(this.saveTimer);
+        this.saveTimer = null;
+        this.unsubscribe();
+        this.listeners.clear();
+    }
 }
 /**
  * 一个项目的运行时状态：画布索引 + 按需打开的画布。
@@ -162,6 +182,8 @@ export class BoardRuntime {
 export class ProjectRuntime {
     meta;
     boards = [];
+    // 不复用已删除的地址，避免旧页面或 MCP 会话误写同名的新画布。
+    deletedIds = new Set();
     open = new Map();
     indexTimer = null;
     /** hub 注入：任何画布有提交时回调（广播 / registry.touch） */
@@ -181,7 +203,7 @@ export class ProjectRuntime {
         return [...this.boards].sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))[0];
     }
     findBoardMeta(idOrTitle) {
-        return this.boards.find((b) => b.id === idOrTitle || b.title === idOrTitle);
+        return this.boards.find((b) => b.id === idOrTitle) ?? this.boards.find((b) => b.title === idOrTitle);
     }
     /** 打开（或取回已打开的）一块画布；不存在返回 undefined */
     board(idOrTitle) {
@@ -206,7 +228,7 @@ export class ProjectRuntime {
         const base = slugify(clean);
         let id = base;
         let n = 2;
-        while (this.boards.some((b) => b.id === id))
+        while (this.boards.some((b) => b.id === id) || this.deletedIds.has(id))
             id = `${base}-${n++}`;
         const rt = new BoardRuntime(this.meta.slug, id, clean, (brt) => this.handleCommit(brt));
         const fresh = defaultBoard();
@@ -220,6 +242,17 @@ export class ProjectRuntime {
         rt.flush();
         this.persistIndex();
         return rt;
+    }
+    deleteBoard(idOrTitle) {
+        const meta = this.findBoardMeta(idOrTitle);
+        if (!meta)
+            throw new Error(`画布「${idOrTitle}」不存在或已删除`);
+        this.board(meta.id).remove();
+        this.open.delete(meta.id);
+        this.boards = this.boards.filter((b) => b.id !== meta.id);
+        this.deletedIds.add(meta.id);
+        this.persistIndex();
+        return { ...meta };
     }
     handleCommit(brt) {
         const meta = this.boards.find((b) => b.id === brt.id);
@@ -241,6 +274,7 @@ export class ProjectRuntime {
                 const raw = JSON.parse(readFileSync(idx, 'utf-8'));
                 if (Array.isArray(raw?.boards)) {
                     this.boards = raw.boards.filter((b) => b && typeof b.id === 'string' && typeof b.title === 'string');
+                    this.deletedIds = new Set((raw.deletedIds ?? []).filter((id) => typeof id === 'string'));
                     return;
                 }
             }
@@ -333,7 +367,7 @@ export class ProjectRuntime {
             mkdirSync(projectDirOnDisk(this.meta.slug), { recursive: true });
             const file = boardsIndexFile(this.meta.slug);
             const tmp = `${file}.tmp`;
-            writeFileSync(tmp, JSON.stringify({ version: STORE_VERSION, boards: this.boards }, null, 2), 'utf-8');
+            writeFileSync(tmp, JSON.stringify({ version: STORE_VERSION, boards: this.boards, deletedIds: [...this.deletedIds] }, null, 2), 'utf-8');
             renameSync(tmp, file);
         }
         catch (err) {

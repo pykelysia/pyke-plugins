@@ -138,6 +138,38 @@ describe('项目存档迁移', () => {
 })
 
 describe('一个项目多块画布', () => {
+  it('删除含待存档操作的画布后，重启、旧引用和定时器都不能恢复它；同名新画布地址不同', async () => {
+    process.env.UI_DRAW_HOME = mkdtempSync(join(tmpdir(), 'ui-draw-delete-'))
+    const reg = new ProjectRegistry()
+    const rt = new ProjectRuntime(reg.register(join(process.env.UI_DRAW_HOME, 'work', 'delete')))
+    const deleted = rt.createBoard('首页', { width: 1440, height: 900, grid: false })
+    const kept = rt.createBoard('设置', { width: 390, height: 844, grid: true })
+    deleted.service.commit({ type: 'addElement', element: { id: 'a', kind: 'rect', layer: '草稿', x: 10, y: 10, w: 20, h: 20, color: '#000', width: 1 } })
+    expect(rt.deleteBoard(deleted.id).title).toBe('首页')
+    expect(rt.listBoards().map((b) => b.id)).toEqual([kept.id])
+    expect(rt.board(deleted.id)).toBeUndefined()
+    expect(() => rt.deleteBoard(deleted.id)).toThrow(/不存在/)
+    deleted.service.commit({ type: 'resize', width: 200, height: 200 })
+    deleted.dispose()
+    await new Promise((resolve) => setTimeout(resolve, 350))
+    rt.dispose()
+    expect(existsSync(deleted.storePath)).toBe(false)
+    expect(existsSync(kept.storePath)).toBe(true)
+
+    const restored = new ProjectRuntime(rt.meta)
+    expect(restored.board(deleted.id)).toBeUndefined()
+    const replacement = restored.createBoard('首页', { width: 800, height: 600, grid: false })
+    expect(replacement.id).not.toBe(deleted.id)
+    expect(restored.listBoards().some((b) => b.id === deleted.id)).toBe(false)
+    restored.deleteBoard(replacement.id)
+    restored.deleteBoard(kept.id)
+    restored.dispose()
+    const empty = new ProjectRuntime(rt.meta)
+    expect(empty.boardCount).toBe(0)
+    expect(empty.latestBoard()).toBeUndefined()
+    empty.dispose()
+  })
+
   it('createBoard 支新画布、标题唯一、互不串台；提交后摘要同步', () => {
     process.env.UI_DRAW_HOME = mkdtempSync(join(tmpdir(), 'ui-draw-hub-boards-'))
     const proj = join(process.env.UI_DRAW_HOME, 'work', 'multi')

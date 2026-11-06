@@ -1,6 +1,6 @@
 // ui-draw 人类端画板：与 agent 共享同一份状态（服务端权威，WS 双向同步）
 import { renderBoard } from './shared/render.js'
-import { elementBBox, hitElement } from './shared/ops.js'
+import { elementBBox, hitElement, validateBoardDimensions } from './shared/ops.js'
 
 const boardCanvas = document.getElementById('board-canvas')
 const overlayCanvas = document.getElementById('overlay-canvas')
@@ -97,11 +97,13 @@ async function copyText(text, okMsg) {
 const API_BASE = new URL('.', location.href).pathname.replace(/\/$/, '') + '/'
 let ws = null
 let wsTimer = null
+let leavingBoard = false
 function connectWs() {
   const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${API_BASE.replace(/\/$/, '')}/ws`
   ws = new WebSocket(wsUrl)
   ws.onopen = () => setStatus(true)
   ws.onclose = () => {
+    if (leavingBoard) return
     setStatus(false)
     clearTimeout(wsTimer)
     wsTimer = setTimeout(connectWs, 1500)
@@ -110,6 +112,12 @@ function connectWs() {
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data)
     if (msg.type === 'init' || msg.type === 'update') applyState(msg)
+    else if (msg.type === 'boards_changed') {
+      if (lastProject) lastProject.boards = msg.boards
+      renderBoardSelect({ project: lastProject, canvas: lastCanvas })
+    } else if (msg.type === 'board_deleted') {
+      leaveDeletedBoard()
+    }
     else if (msg.type === 'error') toast('操作被拒绝：' + msg.message)
   }
 }
@@ -152,6 +160,7 @@ function applyState(msg) {
   renderAnnoPanel()
   updateStatusText()
   updateCopyButton()
+  updateBoardControls()
 }
 
 function startAnim(id, dur) {
@@ -182,6 +191,106 @@ function renderBoardSelect(msg) {
 boardSelect.addEventListener('change', () => {
   const id = boardSelect.value
   if (id) location.href = `../${encodeURIComponent(id)}/`
+})
+
+// ---------- 画布管理 ----------
+const resizeButton = document.getElementById('btn-resize-board')
+const deleteBoardButton = document.getElementById('btn-delete-board')
+const resizeModal = document.getElementById('resize-modal')
+const resizeForm = document.getElementById('resize-form')
+const boardWidth = document.getElementById('board-width')
+const boardHeight = document.getElementById('board-height')
+const resizeError = document.getElementById('resize-error')
+const resizeSubmit = document.getElementById('resize-submit')
+const deleteBoardModal = document.getElementById('delete-board-modal')
+const deleteBoardConfirm = document.getElementById('delete-board-confirm')
+const deleteBoardError = document.getElementById('delete-board-error')
+let boardActionPending = false
+
+function updateBoardControls() {
+  const disabled = !board || !lastCanvas || ws?.readyState !== WebSocket.OPEN || boardActionPending
+  resizeButton.disabled = disabled
+  deleteBoardButton.disabled = disabled
+  document.getElementById('board-name').textContent = lastCanvas?.title ?? '—'
+  document.getElementById('board-dimensions').textContent = board ? `${board.width} × ${board.height} px` : '—'
+}
+
+function leaveDeletedBoard() {
+  leavingBoard = true
+  clearTimeout(wsTimer)
+  location.assign(new URL('../', location.href).href)
+}
+
+async function boardRequest(url, options) {
+  const response = await fetch(url, { ...options, signal: AbortSignal.timeout(15000) })
+  const result = await response.json()
+  if (!response.ok) {
+    if (response.status === 404) leaveDeletedBoard()
+    throw new Error(result.error ?? `操作失败：HTTP ${response.status}`)
+  }
+  return result
+}
+
+resizeButton.addEventListener('click', () => {
+  if (!board || boardActionPending) return
+  boardWidth.value = board.width
+  boardHeight.value = board.height
+  resizeError.textContent = ''
+  resizeModal.showModal()
+  boardWidth.focus()
+  boardWidth.select()
+})
+document.getElementById('resize-cancel').addEventListener('click', () => resizeModal.close())
+resizeForm.addEventListener('submit', async (ev) => {
+  ev.preventDefault()
+  if (boardActionPending) return
+  resizeError.textContent = ''
+  const targetWidth = boardWidth.valueAsNumber
+  const targetHeight = boardHeight.valueAsNumber
+  try {
+    validateBoardDimensions(targetWidth, targetHeight)
+    boardActionPending = true
+    resizeSubmit.disabled = true
+    updateBoardControls()
+    await boardRequest(`${API_BASE}api/op`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ op: { type: 'resize', width: targetWidth, height: targetHeight }, actor: 'human' }),
+    })
+    resizeModal.close()
+    toast(`画布尺寸已修改为 ${targetWidth} × ${targetHeight} px（可撤销）`)
+  } catch (err) {
+    resizeError.textContent = err.message
+  } finally {
+    boardActionPending = false
+    resizeSubmit.disabled = false
+    updateBoardControls()
+  }
+})
+
+deleteBoardButton.addEventListener('click', () => {
+  if (!board || !lastCanvas || boardActionPending) return
+  document.getElementById('delete-board-description').textContent = `将删除「${lastCanvas.title}」及其全部图层、${board.elements.length} 个图元和批注。`
+  deleteBoardError.textContent = ''
+  deleteBoardModal.showModal()
+})
+document.getElementById('delete-board-cancel').addEventListener('click', () => deleteBoardModal.close())
+deleteBoardConfirm.addEventListener('click', async () => {
+  if (!board || !lastCanvas || boardActionPending) return
+  boardActionPending = true
+  deleteBoardConfirm.disabled = true
+  deleteBoardError.textContent = ''
+  updateBoardControls()
+  try {
+    await boardRequest(new URL(`../api/boards/${encodeURIComponent(lastCanvas.id)}`, location.href), { method: 'DELETE' })
+    leaveDeletedBoard()
+  } catch (err) {
+    deleteBoardError.textContent = '删除失败：' + err.message
+  } finally {
+    boardActionPending = false
+    deleteBoardConfirm.disabled = false
+    updateBoardControls()
+  }
 })
 
 // ---------- 视口：缩放 / 平移 ----------
@@ -844,7 +953,7 @@ document.getElementById('copy-selection').addEventListener('click', copySelectio
 
 // ---------- 键盘 ----------
 document.addEventListener('keydown', (ev) => {
-  if (ev.target === textInput || ev.target === annoText) return
+  if (ev.target.closest('input, textarea, select, dialog')) return
   const mod = ev.ctrlKey || ev.metaKey
   if (mod && ev.shiftKey && ev.key.toLowerCase() === 'c') {
     ev.preventDefault()
@@ -876,6 +985,7 @@ document.addEventListener('keyup', (ev) => {
 
 // ---------- 粘贴图片 ----------
 document.addEventListener('paste', (ev) => {
+  if (ev.target.closest('input, textarea, select, dialog')) return
   const item = [...(ev.clipboardData?.items ?? [])].find((i) => i.type.startsWith('image/'))
   if (!item || !board) return
   const blob = item.getAsFile()
@@ -990,6 +1100,7 @@ function setStatus(connected) {
   document.getElementById('conn-dot').className = 'dot ' + (connected ? 'on' : 'off')
   document.getElementById('disconnected-banner').classList.toggle('show', !connected)
   updateStatusText()
+  updateBoardControls()
 }
 function updateStatusText() {
   if (!board) return

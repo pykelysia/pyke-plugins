@@ -63,6 +63,15 @@
   </main>
 
   <aside id="layers-panel">
+    <section id="board-panel" aria-label="画布管理">
+      <div class="panel-title">画布</div>
+      <div id="board-name">—</div>
+      <div id="board-dimensions" class="hint">—</div>
+      <div class="board-actions">
+        <button id="btn-resize-board" disabled>修改尺寸</button>
+        <button id="btn-delete-board" class="danger" disabled>删除画布</button>
+      </div>
+    </section>
     <div class="panel-title">图层 <span class="hint">（双击改名）</span></div>
     <ul id="layer-list"></ul>
     <button id="btn-add-layer">＋ 新建图层</button>
@@ -84,6 +93,37 @@
       </div>
     </div>
   </div>
+
+  <dialog id="resize-modal" aria-labelledby="resize-title" aria-describedby="resize-help">
+    <form id="resize-form" class="modal-box">
+      <h3 id="resize-title">修改画布尺寸</h3>
+      <div class="size-fields">
+        <label for="board-width">宽度（px）<input id="board-width" name="width" type="number" min="200" max="4096" step="1" required /></label>
+        <span aria-hidden="true">×</span>
+        <label for="board-height">高度（px）<input id="board-height" name="height" type="number" min="200" max="16384" step="1" required /></label>
+      </div>
+      <p id="resize-help" class="hint">支持增大或缩小，图元位置和大小保持不变。缩小后超出边界的内容暂时隐藏，再次扩大可显示。此操作可撤销。</p>
+      <p class="hint">宽 200–4096 px，高 200–16384 px，面积不超过 33,554,432 像素。</p>
+      <p id="resize-error" role="alert"></p>
+      <div class="modal-actions">
+        <button id="resize-cancel" type="button" class="ghost">取消</button>
+        <button id="resize-submit" type="submit">保存尺寸</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="delete-board-modal" aria-labelledby="delete-board-title" aria-describedby="delete-board-description delete-board-help">
+    <div class="modal-box">
+      <h3 id="delete-board-title">删除画布？</h3>
+      <p id="delete-board-description"></p>
+      <p id="delete-board-help" class="hint">此操作无法撤销，已导出的设计包和手动快照会保留。</p>
+      <p id="delete-board-error" role="alert"></p>
+      <div class="modal-actions">
+        <button id="delete-board-cancel" type="button" class="ghost" autofocus>取消</button>
+        <button id="delete-board-confirm" type="button" class="danger">删除画布</button>
+      </div>
+    </div>
+  </dialog>
 
   <div id="toast"></div>
 

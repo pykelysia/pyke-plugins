@@ -74,10 +74,17 @@ describe('applyOp', () => {
     expect(initial).toEqual(before)
   })
 
-  it('resize 拒绝收缩、小数、越界和超过面积上限的尺寸', () => {
+  it('resize 缩小后保留边界外的内容，重新扩大后位置和配置不变', () => {
+    const initial = applyOp(defaultBoard(), { type: 'addElement', element: rectEl() })
+    const shrunk = applyOp(initial, { type: 'resize', width: 200, height: 200 })
+    expect(shrunk).toEqual({ ...initial, width: 200, height: 200 })
+    expect(applyOp(shrunk, { type: 'resize', width: initial.width, height: initial.height })).toEqual(initial)
+  })
+
+  it('resize 拒绝小数、越界和超过面积上限的尺寸', () => {
     const board = defaultBoard()
     for (const [width, height] of [
-      [1599, 1000], [1600, 999], [1600.5, 2000], [1600, NaN],
+      [199, 1000], [1600, 199], [1600.5, 2000], [1600, NaN],
       [4097, 1000], [1600, 16385], [4096, 8193],
     ]) {
       expect(() => applyOp(board, { type: 'resize', width, height })).toThrow()
@@ -88,17 +95,17 @@ describe('applyOp', () => {
 })
 
 describe('BoardService 历史', () => {
-  it('画布扩展可撤销和重做且不丢失内容', () => {
+  it.each([[1600, 6000], [200, 200]])('画布修改为 %i×%i 可撤销和重做且不丢失内容', (width, height) => {
     const s = new BoardService()
     s.commit({ type: 'addElement', element: rectEl() })
     const original = s.snapshot()
-    s.commit({ type: 'resize', width: original.width, height: 6000 })
-    expect(s.board.height).toBe(6000)
+    s.commit({ type: 'resize', width, height })
+    expect([s.board.width, s.board.height]).toEqual([width, height])
     expect(s.board.elements).toEqual(original.elements)
     expect(s.undo()).toBe(true)
     expect(s.board).toEqual(original)
     expect(s.redo()).toBe(true)
-    expect(s.board).toEqual({ ...original, height: 6000 })
+    expect(s.board).toEqual({ ...original, width, height })
   })
 
   it('undo/redo 回放', () => {

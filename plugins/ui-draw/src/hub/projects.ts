@@ -107,6 +107,7 @@ export interface BoardMeta {
 interface BoardsIndexShape {
   version: number
   boards: BoardMeta[]
+  deletedIds?: string[]
 }
 
 const STORE_VERSION = 2
@@ -122,6 +123,8 @@ export class BoardRuntime {
   readonly storePath: string
   private saveTimer: NodeJS.Timeout | null = null
   private readonly listeners = new Set<(board: Board) => void>()
+  private deleted = false
+  private readonly unsubscribe: () => void
 
   constructor(
     readonly projectId: string,
@@ -131,7 +134,7 @@ export class BoardRuntime {
   ) {
     this.storePath = boardFileOnDisk(projectId, id)
     this.load()
-    this.service.subscribe((board) => {
+    this.unsubscribe = this.service.subscribe((board) => {
       this.scheduleSave()
       this.touch(this)
       for (const fn of this.listeners) fn(board)
@@ -166,6 +169,7 @@ export class BoardRuntime {
   }
 
   flush() {
+    if (this.deleted) return
     if (this.saveTimer) {
       clearTimeout(this.saveTimer)
       this.saveTimer = null
@@ -188,6 +192,20 @@ export class BoardRuntime {
       /* 忽略 */
     }
   }
+
+  /** 删除前停止自动存档；旧引用和延迟任务都不能把画布重新写回。 */
+  remove() {
+    try {
+      unlinkSync(this.storePath)
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
+    }
+    this.deleted = true
+    if (this.saveTimer) clearTimeout(this.saveTimer)
+    this.saveTimer = null
+    this.unsubscribe()
+    this.listeners.clear()
+  }
 }
 
 /**
@@ -196,6 +214,8 @@ export class BoardRuntime {
  */
 export class ProjectRuntime {
   private boards: BoardMeta[] = []
+  // 不复用已删除的地址，避免旧页面或 MCP 会话误写同名的新画布。
+  private deletedIds = new Set<string>()
   private open = new Map<string, BoardRuntime>()
   private indexTimer: NodeJS.Timeout | null = null
   /** hub 注入：任何画布有提交时回调（广播 / registry.touch） */
@@ -219,7 +239,7 @@ export class ProjectRuntime {
   }
 
   findBoardMeta(idOrTitle: string): BoardMeta | undefined {
-    return this.boards.find((b) => b.id === idOrTitle || b.title === idOrTitle)
+    return this.boards.find((b) => b.id === idOrTitle) ?? this.boards.find((b) => b.title === idOrTitle)
   }
 
   /** 打开（或取回已打开的）一块画布；不存在返回 undefined */
@@ -243,7 +263,7 @@ export class ProjectRuntime {
     const base = slugify(clean)
     let id = base
     let n = 2
-    while (this.boards.some((b) => b.id === id)) id = `${base}-${n++}`
+    while (this.boards.some((b) => b.id === id) || this.deletedIds.has(id)) id = `${base}-${n++}`
     const rt = new BoardRuntime(this.meta.slug, id, clean, (brt) => this.handleCommit(brt))
     const fresh = defaultBoard()
     fresh.width = Math.round(size.width)
@@ -256,6 +276,17 @@ export class ProjectRuntime {
     rt.flush()
     this.persistIndex()
     return rt
+  }
+
+  deleteBoard(idOrTitle: string): BoardMeta {
+    const meta = this.findBoardMeta(idOrTitle)
+    if (!meta) throw new Error(`画布「${idOrTitle}」不存在或已删除`)
+    this.board(meta.id)!.remove()
+    this.open.delete(meta.id)
+    this.boards = this.boards.filter((b) => b.id !== meta.id)
+    this.deletedIds.add(meta.id)
+    this.persistIndex()
+    return { ...meta }
   }
 
   private handleCommit(brt: BoardRuntime) {
@@ -279,6 +310,7 @@ export class ProjectRuntime {
         const raw = JSON.parse(readFileSync(idx, 'utf-8')) as BoardsIndexShape
         if (Array.isArray(raw?.boards)) {
           this.boards = raw.boards.filter((b) => b && typeof b.id === 'string' && typeof b.title === 'string')
+          this.deletedIds = new Set((raw.deletedIds ?? []).filter((id) => typeof id === 'string'))
           return
         }
       }
@@ -369,7 +401,7 @@ export class ProjectRuntime {
       mkdirSync(projectDirOnDisk(this.meta.slug), { recursive: true })
       const file = boardsIndexFile(this.meta.slug)
       const tmp = `${file}.tmp`
-      writeFileSync(tmp, JSON.stringify({ version: STORE_VERSION, boards: this.boards }, null, 2), 'utf-8')
+      writeFileSync(tmp, JSON.stringify({ version: STORE_VERSION, boards: this.boards, deletedIds: [...this.deletedIds] }, null, 2), 'utf-8')
       renameSync(tmp, file)
     } catch (err) {
       console.error(`[ui-draw] 画布索引写入失败 ${this.meta.slug}:`, err)

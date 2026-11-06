@@ -16,6 +16,9 @@ describe('MCP tool schemas', () => {
       const tools = (await client.listTools()).tools
 
       const resize = tools.find((candidate) => candidate.name === 'resize_board')
+      const deleteBoard = tools.find((candidate) => candidate.name === 'delete_board')
+      expect(deleteBoard?.inputSchema.required).toContain('board')
+      expect(deleteBoard?.inputSchema.properties?.board).toMatchObject({ type: 'string', minLength: 1 })
       expect(resize, 'resize_board is registered').toBeDefined()
       expect(resize!.inputSchema.properties?.width).toMatchObject({ type: 'integer', minimum: 200, maximum: 4096 })
       expect(resize!.inputSchema.properties?.height).toMatchObject({ type: 'integer', minimum: 200, maximum: 16384 })
