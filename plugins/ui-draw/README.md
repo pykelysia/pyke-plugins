@@ -5,7 +5,7 @@
 > 设计哲学：**提供画板使用方法，而非程序接口。** 每次工具调用 = 画板上的一个手势（选笔、落笔、拖动、抬笔），没有 `render(json)` 式的一次性渲染调用。绘画流程（草稿→完整界面→自查→按需批注修改）由配套 skill 教给 agent，而非服务端强制。
 
 - **一个常驻服务**：用户级守护进程（默认 4680），所有 agent 共享，关掉会话也不退出
-- **懒创建**：会话开始不建任何东西；agent 第一次真正调用画板工具时才注册项目、拉起服务
+- **懒创建**：首次使用工具时注册项目，并按需拉起画板服务
 - **一个项目多块画布**：一个界面一块画布，`/p/<项目名>/<画布>/`；项目页 `/p/<项目名>/` 列出画布，根路径 `/` 是项目索引
 - **存档在用户目录**：`~/.ui-draw/projects/<项目名>/boards/<画布>.json`，自动保存、自动恢复
 - **27 个手势式工具** + 1 个 skill，开箱即用
@@ -22,7 +22,7 @@ git clone https://github.com/pykelysia/pyke-plugins.git
 
 按使用的 agent 选择其原生市场入口：ZCode 选择仓库根目录；Claude Code 在仓库根目录执行 `claude plugin marketplace add .` 和 `claude plugin install ui-draw@pyke-plugins`；Codex 执行 `codex plugin marketplace add .` 和 `codex plugin add ui-draw@pyke-plugins`。仓库根目录包含各自的市场清单，插件文件位于 `plugins/ui-draw/`。也可用 `pykelysia/pyke-plugins` 代替本地目录。
 
-> 插件会被复制到 agent 的插件缓存目录，其中不含 `node_modules`。**首次启动 MCP 进程时**，入口脚本 `scripts/run.mjs` 会自动执行一次 `npm install --omit=dev`（`dist/` 已随仓库提交，无需构建）。想提前装好，进入 `plugins/ui-draw/` 执行 `npm install`；只安装插件使用的话不必先装。
+> 新构建首次启动 MCP 时，`scripts/run.mjs` 会把运行文件复制到 `~/.ui-draw/releases/`，按锁文件安装运行时依赖并验证启动。后续启动直接复用已准备好的构建。MCP 和守护进程从独立目录加载，市场可以在旧进程运行时替换插件缓存。
 >
 > 如果之前手动配过 ui-draw 的 MCP，二者选一即可（用户级配置优先于插件），避免重复。
 
@@ -49,6 +49,16 @@ node scripts/install-skills.mjs ui-draw --target agents
 ```
 
 此安装器负责复制 skill，不写 MCP 配置。各 agent 的市场、skill 路径与 MCP 配置说明见仓库根目录 [docs/agent-compatibility.md](../../docs/agent-compatibility.md)。插件从自身目录启动时，首次调用 `list_boards`、`setup_board` 或 `inspect_board` 要传 `project_dir=当前项目绝对目录`，以便多项目画布隔离。
+
+### 升级与从 0.4.x 迁移
+
+从 0.4.x 首次迁移时，先结束画板编辑并关闭各宿主的旧版 ui-draw MCP 会话，再从新版源码运行以下命令。命令核对旧服务身份、请求保存画布并等待进程退出。然后在宿主里更新插件并新开会话。
+
+```bash
+npm --prefix plugins/ui-draw run daemon:stop
+```
+
+迁移完成后，更新插件并打开新会话即可。新版先准备独立运行目录，再等待旧服务处理完请求、保存画板并退出。新版健康检查通过后才切换活动版本。若新版启动失败，启动器会恢复上一版。兼容的 MCP 会话会在下一次工具调用时重连，浏览器画板会在原端口可用时自动重连。撤销和重做历史保存在进程内，守护进程切换后从空历史开始。
 
 ---
 
@@ -100,14 +110,16 @@ agent 支起画板 ──► 草稿层起稿 ──► 看一眼自查 ──►
 ## 一个常驻服务，所有 agent 共享
 
 - **常驻守护进程** `dist/daemon.js`：一个用户一份，默认端口 4680（被占用自动顺延），启动后一直活着
-- **懒创建**：会话开始不注册项目、不建画布；agent 第一次调用画板工具时才拉起服务并注册项目（没用画板的对话不留痕迹）
+- **懒创建**：首次安装时等到第一次工具调用才启动守护进程。升级可以在新会话启动时交接服务，项目和画布仍按需创建
 - **自动拉起**：任何 agent 第一次调用工具时，MCP 侧会复用已有实例，没有就用锁文件协调拉起 detached 进程；多个 agent 同时启动也只有一个服务
 - **按项目区分、项目内按画布区分**：每块画布独立内容、独立撤销历史、独立批注；同项目多会话默认落在最近更新的画布
 - **数据在用户目录**：
 
 ```
 ~/.ui-draw/
-├── runtime.json              # 守护进程端口与 pid
+├── runtime.json              # 守护进程身份、端口与停机凭据
+├── active-release.json       # 已通过健康检查的活动构建
+├── releases/<构建标识>/       # 各版运行文件与依赖，保留旧构建用于回退
 ├── index.json                # 项目注册表
 └── projects/<项目名>/
     ├── boards.json           # 画布索引（轻量摘要）
@@ -118,7 +130,7 @@ agent 支起画板 ──► 草稿层起稿 ──► 看一眼自查 ──►
 
 | 环境变量 | 作用 |
 | --- | --- |
-| `UI_DRAW_HOME` | 数据根目录（默认 `~/.ui-draw`） |
+| `UI_DRAW_HOME` | 数据与运行时根目录（默认 `~/.ui-draw`），请放在插件缓存之外 |
 | `UI_DRAW_PROJECT_DIR` | 强制指定项目目录（默认从工作目录向上找 git/package.json 根） |
 | `UI_DRAW_OPENER` | `show_board` 默认打开方式：`desktop` / `system` / `none` / `auto` |
 
@@ -224,10 +236,11 @@ npm run build        # tsc + 复制共享渲染模块到 web/shared/
 npm test             # 单测（状态/历史/批注/项目注册/端口顺延/多画布/存档迁移）
 npm run smoke        # 冒烟：画登录页线框 → 渲染/SVG/存档往返/设计包
 npm run test:e2e     # 端到端：懒创建、多画布隔离切换、多 agent 共享服务、重启恢复、按画布定稿
+npm run test:upgrade -- <已安装依赖的-0.4.0-插件目录>  # 用临时目录验证迁移、热更新和回退
 node tests/dev-board.mjs  # 临时多项目服务 + 两块示例画布（端口 4690），供浏览器联调
 ```
 
-改动 `src/` 或 `web/` 后请 `npm run build` 并提交 `dist/`、`web/shared/`，否则插件安装到的版本还是旧代码。
+改动 `src/` 或 `web/` 后请 `npm run build` 并提交 `dist/`、`web/shared/`。发布更新时同步提升包和市场清单中的版本号，活动运行时只向更高版本切换。
 
 ## 常见问题
 
@@ -235,7 +248,7 @@ node tests/dev-board.mjs  # 临时多项目服务 + 两块示例画布（端口 
 - **项目名是 draft-xxxx**：说明 agent 的工作目录是 ZCode 的草稿工作区（没有 git/package.json）；用 `UI_DRAW_PROJECT_DIR` 可强制项目目录
 - **项目里没有画布**：正常——画布只在 agent 调用 `setup_board` 后才存在；对 agent 说「先在画板上画线框」即可
 - **想换画布**：画板页顶部有画布切换器；`http://127.0.0.1:4680/` 是项目索引 → 项目页列出所有画布
-- **升级后行为没变**：守护进程会按版本号自动替换；仍不放心就 `npm run daemon:stop` 后重启会话
+- **升级后行为没变**：新开 MCP 会话触发切换。若启动日志提示回退，当前会话使用上一版；若提示旧版守护进程仍在运行，按上面的 0.4.x 迁移步骤处理
 - **卸载**：插件方式在 **设置 → 插件** 停用/卸载；手动方式删掉 `~/.zcode/cli/config.json` 里的 `mcp.servers.ui-draw` 和对应的 `skills` 条目、删除 `~/.agents/skills/ui-draw`，再 `npm run daemon:stop`。画板数据在 `~/.ui-draw`，按需自行删除
 
 ## License

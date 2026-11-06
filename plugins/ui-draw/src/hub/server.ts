@@ -1,7 +1,9 @@
+import { timingSafeEqual } from 'node:crypto'
 import { createServer, IncomingMessage, ServerResponse } from 'node:http'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { dirname, extname, join, normalize, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { setTimeout as sleep } from 'node:timers/promises'
 import { WebSocketServer, WebSocket } from 'ws'
 import { Op } from '../board/ops.js'
 import { Board } from '../board/types.js'
@@ -9,7 +11,13 @@ import { renderPng, boundedRasterScale } from '../render/raster.js'
 import { BOARD_MAX_HEIGHT, BOARD_MAX_WIDTH, validateBoardDimensions } from '../board/ops.js'
 import { boardToSvg } from '../render/svg.js'
 import { ProjectRegistry, ProjectRuntime, BoardRuntime } from './projects.js'
-import { DAEMON_VERSION } from './version.js'
+import { DAEMON_VERSION, HUB_PROTOCOL } from './version.js'
+
+interface ShutdownControl {
+  token: string
+  build?: string
+  onShutdown: () => void
+}
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -42,10 +50,12 @@ export class HubServer {
   private registry = new ProjectRegistry()
   private runtimes = new Map<string, ProjectRuntime>()
   private clients = new Map<string, Set<WebSocket>>()
+  private requests = new Set<Promise<void>>()
+  private draining = false
   port = 0
   private started = false
 
-  constructor() {
+  constructor(private control?: ShutdownControl) {
     this.http.on('upgrade', (req, socket, head) => this.handleUpgrade(req, socket, head))
   }
 
@@ -53,18 +63,18 @@ export class HubServer {
     return `http://127.0.0.1:${this.port}`
   }
 
-  async start(from = 4680): Promise<number> {
+  async start(from = 4680, through = from + 20): Promise<number> {
     if (this.started) return this.port
     this.started = true
-    this.port = await this.listen(from)
+    this.port = await this.listen(from, through)
     // 项目运行时懒加载：只在被访问（页面/API/工具）时才读它的画布索引
     return this.port
   }
 
-  private listen(from: number): Promise<number> {
+  private listen(from: number, through: number): Promise<number> {
     return new Promise((ok, fail) => {
       const tryPort = (port: number) => {
-        if (port > from + 20) return fail(new Error('没有可用端口（4680-4700）'))
+        if (port > through) return fail(new Error(`没有可用端口（${from}-${through}）`))
         const onError = () => {
           this.http.removeListener('listening', onListening)
           tryPort(port + 1)
@@ -82,14 +92,34 @@ export class HubServer {
   }
 
   async stop(): Promise<void> {
-    for (const rt of this.runtimes.values()) rt.dispose()
+    const drained = this.draining
+    this.draining = true
+    for (const ws of this.wss.clients) ws.terminate()
     this.wss.close()
-    await new Promise<void>((ok) => this.http.close(() => ok()))
+    await new Promise<void>((ok) => {
+      this.http.close(() => ok())
+      if (drained) this.http.closeAllConnections()
+    })
+    if (!drained) for (const rt of this.runtimes.values()) rt.dispose()
     this.started = false
   }
 
-  flushAll() {
-    for (const rt of this.runtimes.values()) rt.flush()
+  async drain(): Promise<void> {
+    if (this.draining) throw new Error('ui-draw 守护进程正在停止')
+    this.draining = true
+    const timer = new AbortController()
+    try {
+      await Promise.race([
+        Promise.all(this.requests),
+        sleep(5000, undefined, { signal: timer.signal }).then(() => { throw new Error('等待画板请求完成超时') }),
+      ])
+      for (const rt of this.runtimes.values()) rt.flush(true)
+    } catch (err) {
+      this.draining = false
+      throw err
+    } finally {
+      timer.abort()
+    }
   }
 
   // ---------- 项目 / 画布 ----------
@@ -150,9 +180,32 @@ export class HubServer {
   // ---------- HTTP ----------
 
   private handleHttp(req: IncomingMessage, res: ServerResponse) {
-    Promise.resolve()
+    if (req.url === '/api/shutdown' && req.method === 'POST') {
+      const control = this.control
+      const authorization = Buffer.from(req.headers.authorization ?? '')
+      const expected = Buffer.from(`Bearer ${control?.token ?? ''}`)
+      if (!control || authorization.length !== expected.length || !timingSafeEqual(authorization, expected)) {
+        json(res, 403, { error: '停止守护进程需要凭据' })
+        return
+      }
+      void this.drain().then(() => {
+        if (res.destroyed) control.onShutdown()
+        else {
+          res.once('close', control.onShutdown)
+          json(res, 200, { ok: true })
+        }
+      }, (err: Error) => json(res, 503, { error: err.message }))
+      return
+    }
+    if (this.draining && req.url !== '/api/health') {
+      json(res, 503, { error: 'ui-draw 正在切换版本，请稍后重试' })
+      return
+    }
+    const pending = Promise.resolve()
       .then(() => this.route(req, res))
       .catch((err) => json(res, 500, { error: err instanceof Error ? err.message : String(err) }))
+    this.requests.add(pending)
+    void pending.then(() => this.requests.delete(pending))
   }
 
   private async route(req: IncomingMessage, res: ServerResponse) {
@@ -160,7 +213,10 @@ export class HubServer {
     const pathname = decodeURIComponent(u.pathname)
 
     if (pathname === '/api/health') {
-      json(res, 200, { ok: true, name: 'ui-draw', version: DAEMON_VERSION, pid: process.pid })
+      json(res, 200, {
+        ok: true, name: 'ui-draw', version: DAEMON_VERSION, pid: process.pid,
+        protocol: HUB_PROTOCOL, build: this.control?.build,
+      })
       return
     }
     if (pathname === '/api/projects') {
@@ -504,6 +560,10 @@ ${boards.length ? `<ul>${rows}</ul>` : '<div class="empty">这个项目还没有
   }
 
   private handleUpgrade(req: IncomingMessage, socket: import('node:stream').Duplex, head: Buffer) {
+    if (this.draining) {
+      socket.destroy()
+      return
+    }
     const u = new URL(req.url ?? '/', `http://127.0.0.1:${this.port}`)
     const m = decodeURIComponent(u.pathname).match(/^\/p\/([^/]+)\/([^/]+)\/ws$/)
     if (!m) {
@@ -538,6 +598,10 @@ ${boards.length ? `<ul>${rows}</ul>` : '<div class="empty">这个项目还没有
     )
 
     ws.on('message', (data) => {
+      if (this.draining) {
+        this.sendTo(ws, { type: 'error', message: 'ui-draw 正在切换版本，请稍后重试' })
+        return
+      }
       let msg: unknown
       try {
         msg = JSON.parse(String(data))

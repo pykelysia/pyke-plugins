@@ -1,135 +1,6 @@
-import { spawn } from 'node:child_process'
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
-import { dirname, resolve } from 'node:path'
 import { Board } from '../board/types.js'
 import { Op } from '../board/ops.js'
-import { dataDir, lockFile, runtimeFile } from './paths.js'
-import { DAEMON_VERSION } from './version.js'
-
-export interface RuntimeInfo {
-  port: number
-  pid: number
-  version: string
-}
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
-
-function readRuntime(): RuntimeInfo | null {
-  try {
-    if (!existsSync(runtimeFile())) return null
-    const rt = JSON.parse(readFileSync(runtimeFile(), 'utf-8')) as RuntimeInfo
-    return rt?.port ? rt : null
-  } catch {
-    return null
-  }
-}
-
-async function healthOf(port: number): Promise<{ ok: boolean; version?: string; pid?: number } | null> {
-  try {
-    const res = await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(800) })
-    if (!res.ok) return null
-    return (await res.json()) as { ok: boolean; version?: string; pid?: number }
-  } catch {
-    return null
-  }
-}
-
-/** 端口上是否已经没有任何服务（等旧守护进程真正退出） */
-async function portDown(port: number, timeoutMs = 4000): Promise<boolean> {
-  const started = Date.now()
-  while (Date.now() - started < timeoutMs) {
-    if (!(await healthOf(port))) return true
-    await sleep(150)
-  }
-  return false
-}
-
-function daemonEntry(): string {
-  // dist/hub/client.js → dist/daemon.js
-  return resolve(dirname(fileURLToPath(import.meta.url)), '..', 'daemon.js')
-}
-
-function spawnDaemon(): void {
-  const child = spawn(process.execPath, [daemonEntry()], {
-    detached: true,
-    stdio: 'ignore',
-    windowsHide: true,
-    env: process.env,
-  })
-  child.unref()
-}
-
-/**
- * 保证用户级守护进程在运行：
- * - 已有健康实例 → 复用（多 agent 因此共享同一端口）
- * - 否则用锁文件协调，拉起一个 detached 进程
- */
-export async function ensureDaemon(): Promise<RuntimeInfo> {
-  mkdirSync(dataDir(), { recursive: true })
-  const existing = readRuntime()
-  if (existing) {
-    const h = await healthOf(existing.port)
-    if (h?.ok) {
-      if (h.version === DAEMON_VERSION) return existing
-      // 版本不一致（刚升级过）：停掉旧守护进程，等端口释放后重新拉起
-      try {
-        if (h.pid) process.kill(h.pid)
-      } catch {
-        /* 已经退出 */
-      }
-      await portDown(existing.port)
-    }
-  }
-
-  const lock = lockFile()
-  let acquired = false
-  try {
-    const fd = openSync(lock, 'wx')
-    writeSync(fd, String(process.pid))
-    closeSync(fd)
-    acquired = true
-  } catch {
-    // 别的 agent 正在启动，等它
-  }
-
-  if (acquired || staleLock(lock)) {
-    if (!acquired) {
-      try {
-        unlinkSync(lock)
-      } catch {
-        /* 忽略 */
-      }
-      try {
-        const fd = openSync(lock, 'wx')
-        writeSync(fd, String(process.pid))
-        closeSync(fd)
-        acquired = true
-      } catch {
-        /* 继续等 */
-      }
-    }
-    if (acquired) spawnDaemon()
-  }
-
-  const deadline = Date.now() + 12_000
-  while (Date.now() < deadline) {
-    await sleep(150)
-    const rt = readRuntime()
-    if (rt && (await healthOf(rt.port))?.ok) return rt
-  }
-  throw new Error(
-    `无法启动 ui-draw 后台服务（数据目录 ${dataDir()}）。可以手动运行：node ${daemonEntry()}`,
-  )
-}
-
-function staleLock(lock: string): boolean {
-  try {
-    return Date.now() - statSync(lock).mtimeMs > 10_000
-  } catch {
-    return false
-  }
-}
+import { ensureDaemon, RuntimeInfo } from './lifecycle.js'
 
 /** 画布摘要（守护进程 boards.json 里的轻量元数据） */
 export interface BoardSummary {
@@ -157,24 +28,40 @@ export interface ProjectInfo {
  */
 export class HubClient {
   private constructor(
-    readonly base: string,
-    readonly project: ProjectInfo,
+    private runtime: RuntimeInfo,
+    public project: ProjectInfo,
     private activeId: string | null,
   ) {}
 
   static async connect(projectDir: string): Promise<HubClient> {
     const rt = await ensureDaemon()
-    const base = `http://127.0.0.1:${rt.port}`
-    const res = await fetch(`${base}/api/projects`, {
+    const info = await HubClient.register(rt, projectDir)
+    const latest = [...(info.boards ?? [])].sort((a, b) => ((a.updatedAt ?? '') < (b.updatedAt ?? '') ? 1 : -1))[0]
+    return new HubClient(rt, info, latest?.id ?? null)
+  }
+
+  private static async register(rt: RuntimeInfo, projectDir: string): Promise<ProjectInfo> {
+    const res = await fetch(`http://127.0.0.1:${rt.port}/api/projects`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ projectDir }),
       signal: AbortSignal.timeout(5000),
     })
     if (!res.ok) throw new Error(`注册项目失败：HTTP ${res.status}`)
-    const info = (await res.json()) as ProjectInfo
-    const latest = [...(info.boards ?? [])].sort((a, b) => ((a.updatedAt ?? '') < (b.updatedAt ?? '') ? 1 : -1))[0]
-    return new HubClient(base, info, latest?.id ?? null)
+    return (await res.json()) as ProjectInfo
+  }
+
+  async refresh(): Promise<HubClient> {
+    const rt = await ensureDaemon()
+    if (rt.pid !== this.runtime.pid || rt.token !== this.runtime.token || rt.port !== this.runtime.port) {
+      this.project = await HubClient.register(rt, this.project.projectDir)
+      this.runtime = rt
+    }
+    return this
+  }
+
+  get base(): string {
+    return `http://127.0.0.1:${this.runtime.port}`
   }
 
   /** 本会话当前在哪块画布上作画 */

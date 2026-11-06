@@ -31,9 +31,6 @@ export function runtimeFile() {
 export function indexFile() {
     return join(dataDir(), 'index.json');
 }
-export function lockFile() {
-    return join(dataDir(), 'daemon.lock');
-}
 /**
  * 项目名 → URL/文件系统安全的段。
  * 保留中文等项目名本身（用户就靠它认项目），只把空格和非法字符换成 '-'。

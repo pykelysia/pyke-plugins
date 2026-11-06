@@ -1,96 +1,106 @@
 #!/usr/bin/env node
-/**
- * 插件入口：确保运行时依赖就绪后启动 ui-draw MCP server。
- *
- * 插件被安装到 agent 的插件缓存目录时通常不会带 node_modules，
- * 所以首次运行在这里自动补装「仅运行时依赖」——dist 已随仓库提交，无需构建。
- * 如果你是在源码仓库里直接运行（已经 npm install 过），这里会立即跳过。
- */
-import { closeSync, existsSync, openSync, unlinkSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
-import { createRequire } from 'node:module'
-import { dirname, join } from 'node:path'
+import { createHash } from 'node:crypto'
+import {
+  cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync,
+} from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { dataDir } from '../dist/hub/paths.js'
+import { readActive, readRelease, releaseRoot, selectRelease, writeJson } from '../dist/hub/lifecycle.js'
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)))
-const log = (msg) => process.stderr.write(`[ui-draw] ${msg}\n`)
-const runtimeRequire = createRequire(join(root, 'dist', 'index.js'))
+const files = ['dist', 'web', 'package.json', 'package-lock.json']
+const log = (message) => process.stderr.write(`[ui-draw] ${message}\n`)
 
-const REQUIRED = [
-  '@modelcontextprotocol/sdk/server/mcp.js',
-  '@napi-rs/canvas',
-  'ws',
-  'zod',
-]
-
-function depsReady() {
-  return REQUIRED.every((p) => {
-    try {
-      runtimeRequire.resolve(p)
-      return true
-    } catch {
-      return false
+function buildId(dir) {
+  const hash = createHash('sha256')
+  hash.update(`${process.platform}/${process.arch}/${process.versions.modules}\n`)
+  function add(path) {
+    const contents = readFileSync(join(dir, path))
+    hash.update(`${path}\0${contents.length}\0`).update(contents)
+  }
+  function scan(path) {
+    for (const entry of readdirSync(join(dir, path), { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name, 'en'))) {
+      const child = `${path}/${entry.name}`
+      if (entry.isDirectory()) scan(child)
+      else add(child)
     }
-  })
+  }
+  scan('dist')
+  scan('web')
+  add('package.json')
+  add('package-lock.json')
+  const { version } = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
+  if (typeof version !== 'string' || !/^\d+\.\d+\.\d+$/.test(version)) throw new Error('插件版本号无效')
+  return `${version}-${hash.digest('hex').slice(0, 24)}`
 }
 
-function sleep(ms) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
-}
+function prepareRelease() {
+  const release = { build: buildId(root) }
+  const target = releaseRoot(release)
+  if (readRelease(target)?.build === release.build) return release
 
-function ensureDeps() {
-  if (depsReady()) return true
-  const lock = join(root, '.install.lock')
-  let acquired = false
+  mkdirSync(dirname(target), { recursive: true })
+  const stage = mkdtempSync(join(dirname(target), '.stage-'))
   try {
-    writeFileSync(lock, String(process.pid), { flag: 'wx' })
-    acquired = true
-  } catch {
-    /* 另一个进程正在装 */
-  }
+    for (const path of files) cpSync(join(root, path), join(stage, path), { recursive: true })
+    if (buildId(stage) !== release.build) throw new Error('插件文件在准备运行时期间发生变化')
+    if (!existsSync(join(stage, 'web', 'index.html'))) throw new Error('插件包缺少画板页面')
 
-  if (acquired) {
-    log('首次运行：安装运行时依赖（npm install --omit=dev，只需一次）…')
-    const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
-    const res = spawnSync(npm, ['install', '--omit=dev', '--no-audit', '--no-fund'], {
-      cwd: root,
-      stdio: ['ignore', 'ignore', 'inherit'],
-      shell: process.platform === 'win32',
-      timeout: 10 * 60 * 1000,
+    log('准备独立运行目录并安装运行时依赖…')
+    const win = process.platform === 'win32'
+    const install = spawnSync(win ? 'npm.cmd' : 'npm', ['ci', '--omit=dev', '--no-audit', '--no-fund'], {
+      cwd: stage, shell: win, stdio: ['ignore', 'ignore', 'inherit'], timeout: 10 * 60_000,
     })
-    try {
-      unlinkSync(lock)
-    } catch {
-      /* 忽略 */
-    }
-    if (res.status !== 0) {
-      log('依赖安装失败（可能是网络问题）。请手动执行：')
-      log(`  cd "${root}" && npm install --omit=dev`)
-      return false
-    }
-    return depsReady()
-  }
+    if (install.status !== 0) throw install.error ?? new Error('运行时依赖安装失败')
+    const check = spawnSync(process.execPath, [join(stage, 'dist', 'daemon.js'), '--check'], {
+      cwd: stage, stdio: ['ignore', 'ignore', 'inherit'], timeout: 30_000, windowsHide: true,
+    })
+    if (check.status !== 0) throw check.error ?? new Error('守护进程启动预检失败')
 
-  // 等另一个进程装完（最多 3 分钟）
-  for (let i = 0; i < 180; i++) {
-    if (depsReady()) return true
-    sleep(1000)
-    if (!existsSync(lock)) break
+    writeJson(join(stage, 'release.json'), release)
+    try {
+      renameSync(stage, target)
+    } catch (err) {
+      // Another launcher may have published the same fully prepared build.
+      if (readRelease(target)?.build !== release.build) throw err
+    }
+    return release
+  } finally {
+    rmSync(stage, { recursive: true, force: true })
   }
-  return depsReady()
 }
 
 async function main() {
-  if (!ensureDeps()) process.exit(1)
-  const entry = join(root, 'dist', 'index.js')
-  if (!existsSync(entry)) {
-    log(`找不到 ${entry}。若从源码运行，请先执行 npm install && npm run build。`)
-    process.exit(1)
+  const home = dataDir()
+  const cwd = process.cwd()
+  process.env.UI_DRAW_HOME = home
+  process.env.UI_DRAW_ORIGINAL_CWD = cwd
+  process.env.UI_DRAW_LAUNCH_ROOT = root
+  if (process.env.UI_DRAW_PROJECT_DIR) process.env.UI_DRAW_PROJECT_DIR = resolve(process.env.UI_DRAW_PROJECT_DIR)
+  mkdirSync(home, { recursive: true })
+  process.chdir(home)
+
+  let release
+  try {
+    release = await selectRelease(prepareRelease())
+  } catch (err) {
+    release = readActive()
+    if (!release) throw err
+    log(`更新失败，继续使用 ${release.build}：${err.message}`)
   }
-  await import(pathToFileURL(entry).href)
+  const deployed = releaseRoot(release)
+  if (process.argv.includes('--daemon')) {
+    const { ensureDaemon: start } = await import(pathToFileURL(join(deployed, 'dist/hub/lifecycle.js')).href)
+    const rt = await start()
+    log(`画板服务 http://127.0.0.1:${rt.port}/`)
+    return
+  }
+  await import(pathToFileURL(join(deployed, 'dist/index.js')).href)
 }
 
 main().catch((err) => {
-  log(`启动失败：${err instanceof Error ? err.stack || err.message : String(err)}`)
-  process.exit(1)
+  log(`启动失败：${err instanceof Error ? err.message : String(err)}`)
+  process.exitCode = 1
 })

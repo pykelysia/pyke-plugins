@@ -1,6 +1,6 @@
 {
   "name": "ui-draw",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "给 coding agent 的协作画板：像人一样一笔一笔画 UI 线框，人类在浏览器实时共创批注，定稿导出设计包。MCP 插件形态，多 agent 共享常驻服务，一个项目多块画布（一个界面一块），画板在 agent 首次调用时才创建。",
   "type": "module",
   "license": "MIT",
@@ -29,9 +29,10 @@
     "install:user": "node scripts/install.mjs",
     "test": "vitest run",
     "test:e2e": "node tests/mcp-e2e.mjs",
+    "test:upgrade": "node tests/runtime-upgrade.mjs",
     "smoke": "node tests/smoke.mjs",
     "start": "node dist/index.js",
-    "daemon": "node dist/daemon.js",
+    "daemon": "node scripts/run.mjs --daemon",
     "daemon:stop": "node scripts/stop-daemon.mjs",
     "validate": "node scripts/validate.mjs"
   },

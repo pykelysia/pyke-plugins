@@ -22,8 +22,8 @@ function projectDir(explicit) {
             throw new Error(`项目目录不存在：${dir}`);
         return resolveProjectDir(dir);
     }
-    const cwd = resolve(process.cwd());
-    const pluginRoot = process.env.PLUGIN_ROOT ?? process.env.CLAUDE_PLUGIN_ROOT ?? process.env.ZCODE_PLUGIN_ROOT;
+    const cwd = resolve(process.env.UI_DRAW_ORIGINAL_CWD ?? process.cwd());
+    const pluginRoot = process.env.UI_DRAW_LAUNCH_ROOT ?? process.env.PLUGIN_ROOT ?? process.env.CLAUDE_PLUGIN_ROOT ?? process.env.ZCODE_PLUGIN_ROOT;
     if (pluginRoot && isInside(cwd, pluginRoot)) {
         throw new Error('MCP 进程运行在插件目录，无法确定当前项目；首次调用 list_boards 或 setup_board 时请传 project_dir=当前项目绝对目录。');
     }
@@ -38,7 +38,7 @@ async function main() {
             if (explicitDir && projectDir(explicitDir) !== clientDir) {
                 throw new Error(`当前 MCP 会话已绑定项目 ${clientDir}，不能切换到另一个项目。请新开会话。`);
             }
-            return clientPromise;
+            return clientPromise.then((connected) => connected.refresh());
         }
         const dir = projectDir(explicitDir);
         clientDir = dir;

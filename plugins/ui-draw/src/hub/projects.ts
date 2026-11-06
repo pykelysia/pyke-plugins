@@ -168,7 +168,7 @@ export class BoardRuntime {
     }, 300)
   }
 
-  flush() {
+  flush(strict = false) {
     if (this.deleted) return
     if (this.saveTimer) {
       clearTimeout(this.saveTimer)
@@ -180,6 +180,7 @@ export class BoardRuntime {
       writeFileSync(tmp, JSON.stringify({ version: STORE_VERSION, id: this.id, title: this.title, board: this.service.board }, null, 2), 'utf-8')
       renameSync(tmp, this.storePath)
     } catch (err) {
+      if (strict) throw err
       console.error(`[ui-draw] 存档失败 ${this.storePath}:`, err)
     }
   }
@@ -392,7 +393,7 @@ export class ProjectRuntime {
     }, 300)
   }
 
-  private persistIndex() {
+  private persistIndex(strict = false) {
     if (this.indexTimer) {
       clearTimeout(this.indexTimer)
       this.indexTimer = null
@@ -404,13 +405,14 @@ export class ProjectRuntime {
       writeFileSync(tmp, JSON.stringify({ version: STORE_VERSION, boards: this.boards, deletedIds: [...this.deletedIds] }, null, 2), 'utf-8')
       renameSync(tmp, file)
     } catch (err) {
+      if (strict) throw err
       console.error(`[ui-draw] 画布索引写入失败 ${this.meta.slug}:`, err)
     }
   }
 
-  flush() {
-    for (const rt of this.open.values()) rt.flush()
-    this.persistIndex()
+  flush(strict = false) {
+    for (const rt of this.open.values()) rt.flush(strict)
+    this.persistIndex(strict)
   }
 
   dispose() {

@@ -132,7 +132,7 @@ export class BoardRuntime {
             this.flush();
         }, 300);
     }
-    flush() {
+    flush(strict = false) {
         if (this.deleted)
             return;
         if (this.saveTimer) {
@@ -146,6 +146,8 @@ export class BoardRuntime {
             renameSync(tmp, this.storePath);
         }
         catch (err) {
+            if (strict)
+                throw err;
             console.error(`[ui-draw] 存档失败 ${this.storePath}:`, err);
         }
     }
@@ -358,7 +360,7 @@ export class ProjectRuntime {
             this.persistIndex();
         }, 300);
     }
-    persistIndex() {
+    persistIndex(strict = false) {
         if (this.indexTimer) {
             clearTimeout(this.indexTimer);
             this.indexTimer = null;
@@ -371,13 +373,15 @@ export class ProjectRuntime {
             renameSync(tmp, file);
         }
         catch (err) {
+            if (strict)
+                throw err;
             console.error(`[ui-draw] 画布索引写入失败 ${this.meta.slug}:`, err);
         }
     }
-    flush() {
+    flush(strict = false) {
         for (const rt of this.open.values())
-            rt.flush();
-        this.persistIndex();
+            rt.flush(strict);
+        this.persistIndex(strict);
     }
     dispose() {
         for (const rt of this.open.values())

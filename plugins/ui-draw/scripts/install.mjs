@@ -9,7 +9,7 @@
  * 用法：node scripts/install.mjs [--no-config] [--no-skill] [--no-daemon]
  */
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { spawnSync, spawn } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -37,7 +37,7 @@ log('构建…')
 const b = npm(['run', 'build'])
 if (b.status !== 0) process.exit(1)
 
-const entry = join(root, 'dist', 'index.js')
+const entry = join(root, 'scripts', 'run.mjs')
 const skillFile = join(homedir(), '.agents', 'skills', 'ui-draw', 'SKILL.md')
 
 // 2. MCP 配置
@@ -73,16 +73,12 @@ if (!args.has('--no-skill')) {
 
 // 4. 守护进程
 if (!args.has('--no-daemon')) {
-  const child = spawn(process.execPath, [join(root, 'dist', 'daemon.js')], {
-    detached: true,
-    stdio: 'ignore',
-    windowsHide: true,
+  const started = spawnSync(process.execPath, [entry, '--daemon'], {
+    stdio: 'inherit',
   })
-  child.unref()
-  log('已尝试启动常驻守护进程（若已在运行会自动退出）')
+  if (started.status !== 0) process.exit(1)
 }
 
 log('')
 log('安装完成。新开一个会话即可使用 ui-draw 工具与 skill。')
-log('画板服务/项目索引：http://127.0.0.1:4680/')
 log('如果你走的是「插件市场」安装，这里不需要重复执行；插件首次运行会自动补齐依赖。')
