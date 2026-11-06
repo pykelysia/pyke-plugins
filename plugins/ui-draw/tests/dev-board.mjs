@@ -2,6 +2,7 @@
 // 注意：使用独立的数据目录，避免和常驻守护进程共享同一份存档。
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 process.env.UI_DRAW_HOME = mkdtempSync(join(tmpdir(), 'ui-draw-dev-'))
 const { HubServer } = await import('../dist/hub/server.js')
@@ -26,7 +27,7 @@ async function createBoard(title, width, height) {
       body: JSON.stringify({ title, width, height, grid: true }),
     })
   ).json()
-  return `http://127.0.0.1:${port}/p/${encodeURIComponent(slug)}/${encodeURIComponent(r.board.id)}`
+  return `http://127.0.0.1:${port}/p/${encodeURIComponent(slug)}/${encodeURIComponent(r.board.id)}/`
 }
 async function boardOp(boardUrl, op) {
   await fetch(`${boardUrl}api/op`, {
