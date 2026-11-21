@@ -140,11 +140,13 @@ function cmdInstall(argv) {
     console.log(`已写入 MCP 配置 -> ${configFile}（原文件已备份）`)
   } else if (hasMcp && !skipMcp && target === 'copilot' && scope === 'user') {
     console.log('提示：copilot 的 MCP 配置需要项目级 .mcp.json；重跑并加 --scope project --project <仓库路径>。本次仅安装了 skill。')
-  } else if (hasMcp && !skipMcp) {
+  } else if (hasMcp && !skipMcp && !hasMcpWriter(target, 'user') && !hasMcpWriter(target, 'project')) {
     console.log(
       `提示：${target} 目标没有统一的 MCP 配置位置；如需 MCP 工具，` +
         '可改用 --target zcode|cursor|gemini|claude|copilot|cline|windsurf|roo|kilo 重新执行。',
     )
+  } else if (hasMcp && !skipMcp) {
+    console.log(`提示：${target} 在 ${scope} scope 下没有可写的 MCP 配置；可调整 --scope 或更换 --target 后重跑。`)
   } else if (hasMcp && skipMcp) {
     console.log('已按 --no-mcp 跳过 MCP 配置。')
   }
@@ -171,7 +173,9 @@ function cmdUninstall(argv) {
   })
   for (const destination of removedSkills) console.log(`已移除 skill -> ${destination}`)
 
-  if (pluginHasMcp(pluginDir)) {
+  if (pluginHasMcp(pluginDir) && hasMcpWriter(target, scope)) {
+    // 负载与 MCP 配置同生命周期：仅随可写配置的目标一起移除，
+    // 避免卸载 agents 目标时破坏其他 target 已写入的 MCP 指向
     const skillFiles = removedSkills.map((destination) => join(destination, 'SKILL.md').replaceAll('\\', '/'))
     const changed = removeMcpConfig({ target, scope, project: values.project, pluginName, skillFiles })
     console.log(changed ? '已从 MCP 配置移除本插件条目（原文件已备份）。' : 'MCP 配置中没有本插件条目。')

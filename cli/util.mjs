@@ -16,11 +16,16 @@ export function fail(message, exitCode = 1) {
   throw new CliError(message, exitCode)
 }
 
-/** 读 JSON；文件不存在返回 undefined，空文件返回 {}。 */
+/** 读 JSON；文件不存在返回 undefined，空文件返回 {}，损坏时报清晰错误。 */
 export function readJsonIfExists(file) {
   if (!existsSync(file)) return undefined
   const raw = readFileSync(file, 'utf-8')
-  return raw.trim() ? JSON.parse(raw) : {}
+  if (!raw.trim()) return {}
+  try {
+    return JSON.parse(raw)
+  } catch (error) {
+    throw new CliError(`Cannot parse ${file}: ${error.message}\n修复或移除该文件后重试。`, 1)
+  }
 }
 
 /** 覆盖写 JSON 前先落一份 .bak-<ts> 备份；统一 2 空格缩进与结尾换行。 */

@@ -127,14 +127,15 @@ export function runLegacyInstallSkills(argv, root) {
       throw new CliError('Provide a plugin name from the plugins/ directory.', 2)
     }
     const target = option('--target', 'agents')
-    if (!LEGACY_TARGETS.has(target)) {
+    const scope = option('--scope', 'user')
+    if (!LEGACY_TARGETS.has(target) || !['user', 'project'].includes(scope)) {
       throw new CliError('Use --target agents|claude|copilot|cline|windsurf|roo|kilo and --scope user|project.', 2)
     }
     installSkills({
       root,
       pluginName,
       target,
-      scope: option('--scope', 'user'),
+      scope,
       project: option('--project'),
       force: argv.includes('--force'),
     })
