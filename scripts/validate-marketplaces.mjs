@@ -76,6 +76,15 @@ for (const [name, entry] of catalogs[0].entries) {
       fail(`${relative(pluginDir, path)} name/version must match its marketplace entry`)
     }
   }
+  // npx 安装器的前提：skill 必装；声明 mcp.json 的插件必须有可启动入口
+  const skillsDir = join(pluginDir, 'skills')
+  const hasSkill = existsSync(skillsDir)
+    && readdirSync(skillsDir, { withFileTypes: true })
+      .some((e) => e.isDirectory() && existsSync(join(skillsDir, e.name, 'SKILL.md')))
+  if (!hasSkill) fail(`${name} must ship skills/<skill>/SKILL.md (required by the npx installer)`)
+  if (existsSync(join(pluginDir, 'mcp.json')) && !existsSync(join(pluginDir, 'scripts', 'run.mjs'))) {
+    fail(`${name} declares mcp.json but scripts/run.mjs is missing (required by the npx installer)`)
+  }
 }
 
 const listedDirs = new Set([...catalogs[0].entries.values()].map((entry) => entry.source))
@@ -84,4 +93,12 @@ for (const dir of pluginDirs) {
   if (!listedDirs.has(`plugins/${dir.name}`)) fail(`plugins/${dir.name} is not listed in all marketplaces`)
 }
 
-console.log(`Validated ${catalogs[0].entries.size} plugin(s) across ${catalogs.length} marketplace manifests.`)
+const packageJsonPath = join(root, 'package.json')
+if (!existsSync(packageJsonPath)) fail('missing package.json (npx installer package)')
+const pkg = readJson(packageJsonPath)
+const binFile = pkg?.bin?.['pyke-plugins']
+if (typeof binFile !== 'string' || !existsSync(resolve(root, binFile))) {
+  fail('package.json bin.pyke-plugins must point to an existing file')
+}
+
+console.log(`Validated ${catalogs[0].entries.size} plugin(s) across ${catalogs.length} marketplace manifests and the CLI package manifest.`)
