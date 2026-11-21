@@ -1,0 +1,37 @@
+{
+  "name": "pyke-plugins",
+  "version": "0.1.0",
+  "description": "跨 agent 的 skills 与工具插件市场：npx pyke-plugins install <plugin> 一键安装 skill 并写入 MCP 配置。",
+  "type": "module",
+  "license": "MIT",
+  "author": "pyke",
+  "bin": {
+    "pyke-plugins": "bin/pyke-plugins.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "agent",
+    "skills",
+    "plugins",
+    "marketplace",
+    "mcp",
+    "installer",
+    "cli"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pykelysia/pyke-plugins.git"
+  },
+  "homepage": "https://github.com/pykelysia/pyke-plugins#readme",
+  "bugs": {
+    "url": "https://github.com/pykelysia/pyke-plugins/issues"
+  },
+  "files": [
+    "bin",
+    "cli",
+    "marketplace.json",
+    "plugins"
+  ]
+}
