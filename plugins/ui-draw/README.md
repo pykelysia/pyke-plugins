@@ -14,7 +14,23 @@
 
 ## 安装
 
-### 方式一：从原生插件市场安装（推荐）
+### 方式一：npx 一键安装（推荐）
+
+无需克隆仓库，一条命令装好 skill 并写入 MCP 配置：
+
+```bash
+npx pyke-plugins install ui-draw --target zcode
+```
+
+`--target` 按目标 agent 选择：`zcode`（写 `~/.zcode/cli/config.json` 并启用 skill）、`cursor`、`gemini`、`claude`、`cline`、`windsurf`、`roo`、`kilo`（各自合并对应配置文件）；`copilot` 需加 `--scope project --project <仓库路径>` 写项目级 `.mcp.json`；默认 `agents` 只装 skill 到 `~/.agents/skills`，适合任意支持 Agent Skills 的 agent。细分选项：`--no-skill`、`--no-mcp`、`--force`；卸载用 `npx pyke-plugins uninstall ui-draw --target <同安装时>`。
+
+安装器会：把插件负载复制到稳定目录 `~/.pyke-plugins/plugins/ui-draw/`（MCP 配置指向这里，不依赖 npx 缓存）→ 安装 skill → 把 MCP 条目合并进目标配置（写前自动备份 `.bak-<时间戳>`，不动其他配置）。目标与配置文件对照见仓库根 [docs/agent-compatibility.md](../../docs/agent-compatibility.md)。
+
+> 新构建首次启动 MCP 时，`scripts/run.mjs` 会把运行文件复制到 `~/.ui-draw/releases/`，按锁文件安装运行时依赖并验证启动。后续启动直接复用已准备好的构建。MCP 和守护进程从独立目录加载，市场可以在旧进程运行时替换插件缓存。
+>
+> 如果之前手动配过 ui-draw 的 MCP，二者选一即可（用户级配置优先于插件），避免重复。
+
+### 方式二：从原生插件市场安装
 
 ```bash
 git clone https://github.com/pykelysia/pyke-plugins.git
@@ -22,25 +38,21 @@ git clone https://github.com/pykelysia/pyke-plugins.git
 
 按使用的 agent 选择其原生市场入口：ZCode 选择仓库根目录；Claude Code 在仓库根目录执行 `claude plugin marketplace add .` 和 `claude plugin install ui-draw@pyke-plugins`；Codex 执行 `codex plugin marketplace add .` 和 `codex plugin add ui-draw@pyke-plugins`。仓库根目录包含各自的市场清单，插件文件位于 `plugins/ui-draw/`。也可用 `pykelysia/pyke-plugins` 代替本地目录。
 
-> 新构建首次启动 MCP 时，`scripts/run.mjs` 会把运行文件复制到 `~/.ui-draw/releases/`，按锁文件安装运行时依赖并验证启动。后续启动直接复用已准备好的构建。MCP 和守护进程从独立目录加载，市场可以在旧进程运行时替换插件缓存。
->
-> 如果之前手动配过 ui-draw 的 MCP，二者选一即可（用户级配置优先于插件），避免重复。
-
-### 方式二：一键脚本（不使用插件市场）
+### 方式三：一键脚本（ZCode，不使用插件市场）
 
 ```bash
 git clone https://github.com/pykelysia/pyke-plugins.git
-cd ui-draw/plugins/ui-draw
+cd pyke-plugins/plugins/ui-draw
 node scripts/install.mjs
 ```
 
-从仓库根目录也可以运行 `npm --prefix plugins/ui-draw run install:user`。脚本会：安装依赖并构建 → 写 `~/.zcode/cli/config.json` 的 `mcp.servers.ui-draw` → 把 skill 复制到 `~/.agents/skills/ui-draw` 并在 ZCode 配置中启用 → 拉起常驻守护进程。写完会提示你新开会话。
+从仓库根目录也可以运行 `npm --prefix plugins/ui-draw run install:user`。脚本会：安装依赖并构建 → 写 `~/.zcode/cli/config.json` 的 `mcp.servers.ui-draw` → 把 skill 复制到 `~/.agents/skills/ui-draw` 并在 ZCode 配置中启用 → 拉起常驻守护进程。写完会提示你新开会话。与 npx 安装效果等价，适合离线或从源码安装的场景。
 
 可加 `--no-config` / `--no-skill` / `--no-daemon` 跳过其中某一步。
 
-### 方式三：其他支持 Agent Skills / MCP 的 agent
+### 方式四：克隆仓库手动安装
 
-从仓库根目录运行以下命令构建插件，再将 skill 安装到 agent 支持的路径，并按其 MCP 格式配置 `plugins/ui-draw/scripts/run.mjs`。Codex、Cursor、Gemini CLI、OpenCode、Roo Code、Kilo Code 等可使用通用安装器；Cline 和 Windsurf/Cascade 用 `--target cline` 或 `--target windsurf`：
+从仓库根目录运行以下命令构建插件，再将 skill 安装到 agent 支持的路径，并按其 MCP 格式配置 `plugins/ui-draw/scripts/run.mjs`：
 
 ```bash
 npm --prefix plugins/ui-draw install
@@ -48,7 +60,7 @@ npm --prefix plugins/ui-draw run build
 node scripts/install-skills.mjs ui-draw --target agents
 ```
 
-此安装器负责复制 skill，不写 MCP 配置。各 agent 的市场、skill 路径与 MCP 配置说明见仓库根目录 [docs/agent-compatibility.md](../../docs/agent-compatibility.md)。插件从自身目录启动时，首次调用 `list_boards`、`setup_board` 或 `inspect_board` 要传 `project_dir=当前项目绝对目录`，以便多项目画布隔离。
+此安装器只复制 skill，不写 MCP 配置（各 agent 的配置文件路径见 [docs/agent-compatibility.md](../../docs/agent-compatibility.md)）；需要同时配 MCP 时优先用方式一的 npx 安装器。插件从自身目录启动时，首次调用 `list_boards`、`setup_board` 或 `inspect_board` 要传 `project_dir=当前项目绝对目录`，以便多项目画布隔离。
 
 ### 升级与从 0.4.x 迁移
 

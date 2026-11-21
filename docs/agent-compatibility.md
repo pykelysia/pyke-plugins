@@ -22,7 +22,26 @@
 
 **项目识别：** 有些插件宿主从插件目录启动 MCP，`process.cwd()` 因此不是用户项目。使用画板时，首次调用 `list_boards`（或直接 `setup_board`、`inspect_board`）请传 `project_dir`，值为当前用户项目的绝对目录；随后该 MCP 会话绑定该项目。也可以在 MCP 配置中设置固定的 `UI_DRAW_PROJECT_DIR`。画板的默认快照、设计包和工具中传入的相对文件路径都会以该项目为基准。
 
-## 安装可移植 skill
+## 一键安装（npx，推荐）
+
+无需克隆仓库，按目标 agent 选择 `--target`，安装器会同时装好 skill 并写入 MCP 配置（写前自动备份，只合并本插件条目，不动其他配置）：
+
+```bash
+npx pyke-plugins install ui-draw --target zcode     # ZCode：合并 ~/.zcode/cli/config.json 并启用 skill
+npx pyke-plugins install ui-draw --target cursor    # Cursor：合并 ~/.cursor/mcp.json
+npx pyke-plugins install ui-draw --target gemini    # Gemini CLI：合并 ~/.gemini/settings.json
+npx pyke-plugins install ui-draw --target claude    # Claude Code：合并 ~/.claude.json
+npx pyke-plugins install ui-draw --target cline     # Cline：合并 cline_mcp_settings.json
+npx pyke-plugins install ui-draw --target windsurf  # Windsurf/Cascade：合并 mcp_config.json
+npx pyke-plugins install ui-draw --target roo       # Roo Code：合并 ~/.roo/mcp.json
+npx pyke-plugins install ui-draw --target kilo      # Kilo Code：合并 ~/.kilo/kilo.json
+```
+
+GitHub Copilot 的 MCP 是项目级配置，需加 `--scope project --project <仓库路径>` 写入 `<仓库>/.mcp.json`。默认 `--target agents` 只装 skill 到 `~/.agents/skills`（Codex、Cursor、Gemini CLI、OpenCode、Roo Code、Kilo Code 等共用），此时 MCP 需按下文手动配置。
+
+带 MCP 的插件会把负载（dist/web/scripts）复制到稳定目录 `~/.pyke-plugins/plugins/ui-draw/`，MCP 配置指向该目录的 `scripts/run.mjs`，不依赖 npx 缓存。卸载：`npx pyke-plugins uninstall ui-draw --target <同安装时>`。细分选项：`--no-skill`、`--no-mcp`、`--force`。
+
+## 克隆仓库手动安装 skill
 
 默认写入 `~/.agents/skills`，适用于 Codex、Cursor、Gemini CLI、OpenCode、Roo Code、Kilo Code、ZCode 和支持该目录的 Copilot harness：
 
@@ -52,11 +71,11 @@ node scripts/install-skills.mjs ui-draw --target windsurf
 
 Roo Code 和 Kilo Code 可沿用默认的 `agents` 目标，也可用 `--target roo`、`--target kilo` 安装到专属目录。所有目标都支持 `--scope project --project <项目目录>`。
 
-安装器只复制 skill 文件夹，不覆盖现有文件；确需替换时显式传 `--force`。完成后按目标 agent 的方式刷新或重启。
+此安装器只复制 skill 文件夹，不覆盖现有文件；确需替换时显式传 `--force`。完成后按目标 agent 的方式刷新或重启。
 
 ## 为其他 agent 连接 ui-draw MCP
 
-服务入口是插件目录下的 `scripts/run.mjs`。首次运行会补齐运行时依赖。把下列 `<plugin-root>` 换成 `plugins/ui-draw` 的绝对路径。
+安装器已能自动完成以下合并；本节供手动配置或排查时参考。服务入口是插件目录下的 `scripts/run.mjs`。首次运行会补齐运行时依赖。把下列 `<plugin-root>` 换成 `plugins/ui-draw`（仓库内）或 `~/.pyke-plugins/plugins/ui-draw`（npx 安装）的绝对路径。
 
 ### Cursor
 
